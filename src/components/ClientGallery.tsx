@@ -513,22 +513,19 @@ const ClientGallery = ({
     return (
       <div className="min-h-screen bg-gradient-to-b from-background via-surface to-background">
         {splashVisible && project?.project_assets?.splash_poster?.url ? (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
-            <img src={project.project_assets.splash_poster.url} alt={projectName} className="h-full w-full object-contain" />
-            <div className="absolute inset-0 bg-black/25" />
-            <div className="absolute right-4 top-4 flex items-center gap-2">
-              <span className="rounded-full bg-black/45 px-3 py-1 text-sm text-white">{splashCountdown}s</span>
-              <button
-                type="button"
-                onClick={() => setSplashVisible(false)}
-                className="rounded-full bg-white/90 px-3 py-1 text-sm font-medium text-foreground"
-              >
-                Skip
-              </button>
-            </div>
-            <div className="absolute inset-x-0 bottom-10 px-6 text-center text-white">
-              <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{projectName}</h1>
-            </div>
+          <div className="fixed inset-0 z-50 overflow-hidden bg-black">
+            <img
+              src={project.project_assets.splash_poster.url}
+              alt={projectName}
+              className="absolute inset-0 h-[100dvh] w-full object-cover object-center md:object-contain"
+            />
+            <button
+              type="button"
+              onClick={() => setSplashVisible(false)}
+              className="absolute left-1/2 top-[70%] inline-flex -translate-x-1/2 items-center rounded-full bg-black/55 px-4 py-2 text-sm font-medium text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black/65 md:top-[70%]"
+            >
+              {splashCountdown}s Skip
+            </button>
           </div>
         ) : null}
 
