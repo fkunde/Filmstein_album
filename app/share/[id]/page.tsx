@@ -19,6 +19,17 @@ const DEFAULT_SHARE_ORIGIN = "https://snapflare.filmstein.com";
 const DEFAULT_SHARE_DESCRIPTION = "Open this shared photo album on Snapflare.";
 const DEFAULT_SHARE_IMAGE = "/default-cover.svg";
 
+function readShareCardSettings(project: ReturnType<typeof mapRowToProject>) {
+  const visualSettings = project.visual_settings && typeof project.visual_settings === "object"
+    ? project.visual_settings as { share_card?: { title?: string; subtitle?: string } }
+    : undefined;
+
+  return {
+    title: visualSettings?.share_card?.title?.trim() || "",
+    subtitle: visualSettings?.share_card?.subtitle?.trim() || "",
+  };
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
@@ -44,6 +55,9 @@ function toAbsoluteUrl(url: string, origin: string) {
 }
 
 function buildShareDescription(project: ReturnType<typeof mapRowToProject>) {
+  const shareCard = readShareCardSettings(project);
+  if (shareCard.subtitle) return shareCard.subtitle;
+
   const explicitDescription = project.description.trim();
   if (explicitDescription) return explicitDescription;
   if (project.clientName.trim()) {
@@ -125,7 +139,8 @@ async function fetchShareMeta(projectId: string, origin: string) {
   );
 
   const pageUrl = `${origin}/share/${projectId}`;
-  const title = project.name.trim() ? `${project.name.trim()} | Snapflare` : "Snapflare Share";
+  const shareCard = readShareCardSettings(project);
+  const title = shareCard.title || project.name.trim() || "Snapflare Share";
   const description = buildShareDescription(project);
 
   return {

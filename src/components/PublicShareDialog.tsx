@@ -176,12 +176,24 @@ export default function PublicShareDialog({
           </section>
         </div>
 
-        <div className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-4">
-          <Button variant="outline" type="button" onClick={() => void handleWechatShare()} disabled={sharingWechat}>
+        <div className="grid grid-cols-2 gap-2 border-t border-border px-5 py-4 sm:flex sm:justify-end">
+          <Button
+            variant="outline"
+            type="button"
+            onClick={() => void handleWechatShare()}
+            disabled={sharingWechat}
+            className="w-full"
+          >
             {sharingWechat ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="mr-1.5 h-3.5 w-3.5" />}
             Share to WeChat
           </Button>
-          <Button variant="outline" type="button" onClick={handleSaveQrCode} disabled={!qrCodeUrl}>
+          <Button
+            variant="outline"
+            type="button"
+            onClick={handleSaveQrCode}
+            disabled={!qrCodeUrl}
+            className="w-full"
+          >
             <Download className="mr-1.5 h-3.5 w-3.5" />
             Save QR Code
           </Button>
