@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  ArrowLeft,
   Download,
   Loader2,
   Search,
@@ -43,6 +44,66 @@ const EmptyState = ({ message }: { message?: string }) => (
     <p className="text-sm text-muted-foreground">{message ?? "No photos yet."}</p>
   </div>
 );
+
+const AccessGate = ({
+  title,
+  description,
+  password,
+  placeholder,
+  error,
+  busy,
+  submitLabel,
+  backLabel,
+  onPasswordChange,
+  onSubmit,
+  onBack,
+}: {
+  title: string
+  description: string
+  password: string
+  placeholder: string
+  error: string | null
+  busy: boolean
+  submitLabel: string
+  backLabel: string
+  onPasswordChange: (value: string) => void
+  onSubmit: () => void
+  onBack: () => void
+}) => (
+  <section className="flex min-h-[calc(100vh-9rem)] items-center justify-center px-4 py-8 sm:min-h-[calc(100vh-11rem)]">
+    <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-7">
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          {backLabel}
+        </button>
+        <div className="space-y-2 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+          <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+        </div>
+        <div className="space-y-3">
+          <Input
+            type="password"
+            value={password}
+            onChange={(e) => onPasswordChange(e.target.value)}
+            placeholder={placeholder}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !busy) onSubmit()
+            }}
+          />
+          {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+          <Button type="button" className="w-full" onClick={onSubmit} disabled={busy || !password.trim()}>
+            {busy ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Unlocking…</> : submitLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  </section>
+)
 
 type ClientGalleryMode = 'grid' | 'masonry' | 'timeline'
 
@@ -428,6 +489,21 @@ const ClientGallery = ({
     setSortDir((d) => (d === "desc" ? "asc" : "desc"));
   };
 
+  const handleProjectGateBack = () => {
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      window.history.back()
+      return
+    }
+    window.location.href = '/'
+  }
+
+  const handleAlbumGateBack = () => {
+    setLockedAlbumId(null)
+    setAlbumPassword('')
+    setError(null)
+    setActiveAlbum('all')
+  }
+
   const cleanPreview = presentation === "preview";
   const showProjectPasswordGate = requiresProjectPassword && !projectUnlocked && !loading && !splashVisible
   const showAlbumPasswordGate = !showProjectPasswordGate && !!lockedAlbumId && activeAlbumMeta?.access_mode === 'password_protected' && activeAlbumMeta?.unlocked !== true
@@ -466,45 +542,33 @@ const ClientGallery = ({
           {loading ? (
             <p className="py-12 text-center text-sm text-muted-foreground">Loading photos…</p>
           ) : showProjectPasswordGate ? (
-            <section className="mx-auto max-w-md rounded-2xl border border-border bg-card p-6 shadow-sm">
-              <div className="space-y-3">
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground">Enter project password</h1>
-                <p className="text-sm text-muted-foreground">This share project is password protected. Enter the password to continue.</p>
-                <Input
-                  type="password"
-                  value={projectPassword}
-                  onChange={(e) => setProjectPassword(e.target.value)}
-                  placeholder="Project password"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !unlockingProject) void handleProjectUnlock()
-                  }}
-                />
-                {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
-                <Button type="button" onClick={() => void handleProjectUnlock()} disabled={unlockingProject || !projectPassword.trim()}>
-                  {unlockingProject ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Unlocking…</> : 'Enter Project'}
-                </Button>
-              </div>
-            </section>
+            <AccessGate
+              title="Enter album password"
+              description="This album is protected. Enter the password to continue."
+              password={projectPassword}
+              placeholder="Album password"
+              error={error}
+              busy={unlockingProject}
+              submitLabel="Unlock Album"
+              backLabel="Go back"
+              onPasswordChange={setProjectPassword}
+              onSubmit={() => void handleProjectUnlock()}
+              onBack={handleProjectGateBack}
+            />
           ) : showAlbumPasswordGate ? (
-            <section className="mx-auto max-w-md rounded-2xl border border-border bg-card p-6 shadow-sm">
-              <div className="space-y-3">
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground">Enter album password</h1>
-                <p className="text-sm text-muted-foreground">This album is visible, but locked. Enter its password to view the photos inside.</p>
-                <Input
-                  type="password"
-                  value={albumPassword}
-                  onChange={(e) => setAlbumPassword(e.target.value)}
-                  placeholder="Album password"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !unlockingAlbum) void handleAlbumUnlock()
-                  }}
-                />
-                {error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
-                <Button type="button" onClick={() => void handleAlbumUnlock()} disabled={unlockingAlbum || !albumPassword.trim()}>
-                  {unlockingAlbum ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />Unlocking…</> : 'Enter Album'}
-                </Button>
-              </div>
-            </section>
+            <AccessGate
+              title="Enter album password"
+              description="This album is locked. Enter the password to view the photos inside."
+              password={albumPassword}
+              placeholder="Album password"
+              error={error}
+              busy={unlockingAlbum}
+              submitLabel="Unlock Album"
+              backLabel="Back to albums"
+              onPasswordChange={setAlbumPassword}
+              onSubmit={() => void handleAlbumUnlock()}
+              onBack={handleAlbumGateBack}
+            />
           ) : error ? (
             <p className="py-12 text-center text-sm text-destructive" role="alert">{error}</p>
           ) : (
