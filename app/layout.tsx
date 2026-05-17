@@ -16,12 +16,9 @@ export const metadata: Metadata = {
   title: "Snapflare",
   description: "Photo project dashboard",
   icons: {
-    icon: [
-      { url: "/branding/snapflare-mark.svg", type: "image/svg+xml", sizes: "any" },
-      { url: "/favicon.ico" },
-    ],
-    shortcut: ["/branding/snapflare-mark.svg"],
-    apple: [{ url: "/branding/snapflare-mark.svg", sizes: "180x180", type: "image/svg+xml" }],
+    icon: [{ url: "/icon?v=e5d9c16", type: "image/svg+xml", sizes: "any" }],
+    shortcut: ["/icon?v=e5d9c16"],
+    apple: [{ url: "/apple-icon?v=e5d9c16", sizes: "180x180", type: "image/svg+xml" }],
   },
 };
 

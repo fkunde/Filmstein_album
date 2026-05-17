@@ -263,12 +263,13 @@ const PhotoCard = ({
 
       <div className={cn("flex items-start justify-between gap-2 border-t border-border/60 px-3 py-2.5", forceSquare ? "rounded-none" : "") }>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
             <p
               className={cn(
-                "truncate text-sm font-medium transition-colors",
+                "w-full truncate text-sm font-medium transition-colors",
                 selected ? "text-muted-foreground" : "text-foreground",
               )}
+              title={photo.fileName}
             >
               {photo.fileName}
             </p>

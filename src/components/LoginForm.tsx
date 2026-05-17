@@ -68,7 +68,7 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-4">
           <div className="flex justify-center">
-            <SnapflareLogo markClassName="!h-24 !w-auto" />
+            <SnapflareLogo markClassName="!h-32 !w-auto sm:!h-36" />
           </div>
           <div className="text-center">
             <CardDescription>{mode === "login" ? "Log in to access the dashboard." : "Create an admin account with an invite code."}</CardDescription>
