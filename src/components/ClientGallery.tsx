@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { FolderMeta } from "@/lib/albumsFromPhotos";
 import { getClientHeroImage } from "@/lib/clientWatermark";
+import PublicShareButton from "@/components/PublicShareButton";
 
 const VIEWER_SESSION_STORAGE_KEY = 'filmstein-viewer-session-id'
 
@@ -519,8 +520,13 @@ const ClientGallery = ({
               <section>
                 <div className="border-y border-border bg-card p-4 shadow-sm sm:rounded-2xl sm:border sm:p-5 lg:p-6">
                   <div className="space-y-3">
-                    <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{projectName}</h1>
-                    {projectDescription ? <p className="max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">{projectDescription}</p> : null}
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="space-y-3">
+                        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{projectName}</h1>
+                        {projectDescription ? <p className="max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">{projectDescription}</p> : null}
+                      </div>
+                      {id ? <PublicShareButton projectId={id} projectName={projectName} /> : null}
+                    </div>
                   </div>
                 </div>
               </section>

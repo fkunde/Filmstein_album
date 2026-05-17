@@ -1370,6 +1370,8 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
           onClose={() => setShareOpen(false)}
           projectId={project.id}
           projectName={project.name}
+          projectDescription={project.description}
+          projectCoverUrl={project.project_assets?.cover?.url || project.cover_url}
         />
       )}
     </div>
