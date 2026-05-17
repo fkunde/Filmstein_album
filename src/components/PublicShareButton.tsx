@@ -21,8 +21,8 @@ export default function PublicShareButton({ projectId, projectName }: PublicShar
 
   return (
     <>
-      <Button type="button" variant="outline" onClick={() => setOpen(true)}>
-        <Share2 className="mr-1.5 h-4 w-4" />
+      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)} className="shrink-0">
+        <Share2 className="mr-1.5 h-3.5 w-3.5" />
         Share
       </Button>
       <PublicShareDialog
