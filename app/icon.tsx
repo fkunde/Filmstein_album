@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+export const dynamic = 'force-dynamic'
+
 export const size = {
   width: 64,
   height: 64,
@@ -13,7 +15,7 @@ export default function Icon() {
   return new Response(fs.readFileSync(svgPath), {
     headers: {
       'Content-Type': 'image/svg+xml',
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Cache-Control': 'no-store, max-age=0',
     },
   })
 }
