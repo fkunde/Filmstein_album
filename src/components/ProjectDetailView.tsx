@@ -117,6 +117,16 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [downloadChoiceOpen, setDownloadChoiceOpen] = useState(false);
 
+  const fallbackShareCoverUrl = useMemo(() => {
+    const preferred = [
+      project?.project_assets?.cover?.url,
+      project?.cover_url && project.cover_url !== "/default-cover.svg" ? project.cover_url : "",
+      ...photos.flatMap((photo) => [photo.displayUrl, photo.thumbUrl, photo.originalUrl, photo.url]),
+    ].find((value) => typeof value === "string" && value.trim());
+
+    return preferred?.trim() || "";
+  }, [photos, project]);
+
   const refreshFolders = useCallback(async () => {
     try {
       const res = await fetch(`/api/projects/${projectId}/folders`);
@@ -1371,7 +1381,22 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
           projectId={project.id}
           projectName={project.name}
           projectDescription={project.description}
-          projectCoverUrl={project.project_assets?.cover?.url || project.cover_url}
+          projectCoverUrl={fallbackShareCoverUrl}
+          shareCardTitle={project.visual_settings?.share_card?.title}
+          shareCardSubtitle={project.visual_settings?.share_card?.subtitle}
+          onSaved={(nextShareCard) => {
+            setProject((prev) => (
+              prev
+                ? {
+                    ...prev,
+                    visual_settings: {
+                      ...prev.visual_settings,
+                      share_card: nextShareCard,
+                    },
+                  }
+                : prev
+            ));
+          }}
         />
       )}
     </div>

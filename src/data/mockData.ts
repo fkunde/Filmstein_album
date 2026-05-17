@@ -50,6 +50,10 @@ export interface Project {
       scale?: number;
       opacity?: number;
     };
+    share_card?: {
+      title?: string;
+      subtitle?: string;
+    };
     share_access?: {
       enabled?: boolean;
       has_password?: boolean;
