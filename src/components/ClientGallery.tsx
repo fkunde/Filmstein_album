@@ -520,8 +520,8 @@ const ClientGallery = ({
               <section>
                 <div className="border-y border-border bg-card p-4 shadow-sm sm:rounded-2xl sm:border sm:p-5 lg:p-6">
                   <div className="space-y-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1 space-y-3">
                         <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{projectName}</h1>
                         {projectDescription ? <p className="max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">{projectDescription}</p> : null}
                       </div>

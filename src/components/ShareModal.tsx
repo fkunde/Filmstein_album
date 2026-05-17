@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import QRCode from "qrcode";
-import { X, Copy, ExternalLink, Check, Download, Loader2 } from "lucide-react";
+import { X, Copy, ExternalLink, Check, Download, Loader2, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -50,6 +50,7 @@ export default function ShareModal({
   const [cardSubtitleInput, setCardSubtitleInput] = useState(shareCardSubtitle?.trim() || "");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [sharingWechat, setSharingWechat] = useState(false);
   const cardTitle = cardTitleInput.trim() || buildDefaultCardTitle(projectName);
   const cardDescription = cardSubtitleInput.trim() || buildDefaultCardSubtitle(projectName, projectDescription);
   const showCardCover = Boolean(projectCoverUrl?.trim());
@@ -150,6 +151,30 @@ export default function ShareModal({
     document.body.removeChild(link);
   };
 
+  const handleWechatShare = async () => {
+    if (!shareUrl) return;
+
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        setSharingWechat(true);
+        await navigator.share({
+          title: cardTitle,
+          text: cardDescription,
+          url: shareUrl,
+        });
+        return;
+      } catch (error) {
+        const shareError = error as { name?: string };
+        if (shareError?.name === "AbortError") return;
+      } finally {
+        setSharingWechat(false);
+      }
+    }
+
+    await handleCopy();
+    alert("Link copied. Open WeChat and paste it to forward the share card.");
+  };
+
   const handleSaveShareCard = async () => {
     setSaving(true);
     setSaveError(null);
@@ -232,7 +257,7 @@ export default function ShareModal({
             </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-4 rounded-2xl border border-border bg-muted/20 p-4">
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider" htmlFor="share-card-title">
                 Card Title
@@ -262,46 +287,43 @@ export default function ShareModal({
             <p className="text-xs leading-5 text-muted-foreground">
               Leave either field empty to fall back to the project name, project description, or default Snapflare copy.
             </p>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Share Card Preview
-            </label>
-            <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
-              <div className="flex items-stretch gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">
-                    {cardTitle}
-                  </p>
-                  <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted-foreground">
-                    {cardDescription}
-                  </p>
-                  <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground">
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-                      Link Preview
-                    </span>
-                    <span>Snapflare</span>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Share Card Preview
+              </label>
+              <div className="rounded-2xl border border-border bg-white p-3 shadow-sm">
+                <div className="flex items-stretch gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">
+                      {cardTitle}
+                    </p>
+                    <p className="mt-1 line-clamp-3 text-xs leading-5 text-muted-foreground">
+                      {cardDescription}
+                    </p>
+                  </div>
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
+                    {showCardCover ? (
+                      <img
+                        src={projectCoverUrl}
+                        alt={cardTitle}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-full w-full bg-gradient-to-br from-slate-100 via-slate-50 to-slate-200" />
+                    )}
                   </div>
                 </div>
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
-                  {showCardCover ? (
-                    <img
-                      src={projectCoverUrl}
-                      alt={cardTitle}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-100 via-slate-50 to-slate-200 px-2 text-center text-[10px] font-medium uppercase tracking-[0.12em] text-slate-500">
-                      Snapflare
-                    </div>
-                  )}
-                </div>
               </div>
+              <p className="text-xs leading-5 text-muted-foreground">
+                This preview only shows the content you control: cover image, title, and subtitle.
+              </p>
             </div>
-            <p className="text-xs leading-5 text-muted-foreground">
-              This is an editor preview. Actual WeChat or social cards still depend on the share page metadata and the target app's renderer.
-            </p>
+            <div className="flex flex-wrap justify-end gap-2 pt-1">
+              <Button type="button" onClick={() => void handleSaveShareCard()} disabled={saving}>
+                {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                {saving ? "Saving…" : "Save Card Content"}
+              </Button>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -338,16 +360,16 @@ export default function ShareModal({
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border bg-card px-6 py-4">
-          <Button type="button" onClick={() => void handleSaveShareCard()} disabled={saving}>
-            {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
-            {saving ? "Saving…" : "Save Card Content"}
+        <div className="grid shrink-0 grid-cols-1 gap-2 border-t border-border bg-card px-6 py-4 sm:flex sm:flex-wrap sm:justify-end">
+          <Button variant="outline" type="button" onClick={() => void handleWechatShare()} disabled={sharingWechat} className="w-full sm:w-auto">
+            {sharingWechat ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="mr-1.5 h-3.5 w-3.5" />}
+            Share to WeChat
           </Button>
-          <Button variant="outline" type="button" onClick={handleSaveQrCode} disabled={!qrCodeUrl}>
+          <Button variant="outline" type="button" onClick={handleSaveQrCode} disabled={!qrCodeUrl} className="w-full sm:w-auto">
             <Download className="mr-1.5 h-3.5 w-3.5" />
             Save QR Code
           </Button>
-          <Button variant="outline" type="button" onClick={handleOpenAlbum}>
+          <Button variant="outline" type="button" onClick={handleOpenAlbum} className="w-full sm:w-auto">
             <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
             Open Album
           </Button>
