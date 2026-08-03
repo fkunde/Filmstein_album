@@ -20,6 +20,9 @@ import {
   type UploadAnalysisResult,
 } from '@/lib/uploadAnalysis'
 import type { Project } from '@/data/mockData'
+import type { UploadSource } from '@/lib/folderSettings'
+import { generateUniquePrintCode } from '@/lib/printCode'
+import { maybeAutoQueuePhoto } from '@/lib/printQueue'
 
 const BRANCH_TYPE_ORIGINAL = 'original'
 const BRANCH_TYPE_RAW = 'raw'
@@ -41,6 +44,8 @@ export type UploadSessionRow = {
   display_preset: 'original' | '6000' | '4000'
   upload_category: string | null
   upload_decision: 'skip' | 'overwrite' | null
+  upload_source: UploadSource
+  customer_public_consent: boolean | null
   classification: UploadAnalysisResult['classification']
   matched_photo_id: string | null
   matched_version_no: number | null
@@ -89,16 +94,24 @@ export async function createPlaceholderPhoto(params: {
   folderId?: string | null
   fileName: string
   sessionId: string
+  uploadSource?: UploadSource
+  customerPublicConsent?: boolean | null
+  isPublished?: boolean
 }) {
   const photoId = buildGlobalPhotoId()
   const now = new Date().toISOString()
+  const printCode = await generateUniquePrintCode()
   const { error } = await supabase.from('photos').insert([{
     global_photo_id: photoId,
     project_id: params.projectId,
     folder_id: params.folderId || null,
     star_rating: 0,
     status: 1,
-    is_published: false,
+    is_published: params.isPublished === true,
+    upload_source: params.uploadSource || 'admin',
+    customer_public_consent: params.customerPublicConsent ?? null,
+    print_code: printCode,
+    print_count: 0,
     metadata: buildPendingUploadMetadata({
       sessionId: params.sessionId,
       fileName: params.fileName,
@@ -170,6 +183,22 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null
+}
+
+function buildPhotoLifecycleFields(params: {
+  uploadSource: UploadSource
+  customerPublicConsent: boolean | null
+  printCode: string
+  isPublished: boolean
+}) {
+  return {
+    is_published: params.isPublished,
+    upload_source: params.uploadSource,
+    customer_public_consent: params.customerPublicConsent,
+    print_code: params.printCode,
+    print_count: 0,
+    last_printed_at: null,
+  }
 }
 
 export function buildR2PublicUrl(key: string) {
@@ -595,6 +624,7 @@ export async function processDirectUploadSession(sessionId: string, options?: { 
   }
 
   let createdNewPhoto = false
+  let targetPhotoPrintCode: string | null = null
   let targetPhotoId = session.target_photo_id?.trim() || null
   let targetProjectId = session.project_id
   const createdFileIds: Record<'original' | 'thumb' | 'display' | 'clientPreview', string | null> = {
@@ -649,22 +679,33 @@ export async function processDirectUploadSession(sessionId: string, options?: { 
     if (targetPhotoId) {
       const { data: existingPhoto, error: existingPhotoError } = await supabase
         .from('photos')
-        .select('global_photo_id, project_id')
+        .select('global_photo_id, project_id, print_code')
         .eq('global_photo_id', targetPhotoId)
         .maybeSingle()
 
       if (existingPhotoError) return rollback(existingPhotoError.message)
       if (!existingPhoto) return rollback('Photo not found')
       targetProjectId = String(existingPhoto.project_id)
+      targetPhotoPrintCode = typeof existingPhoto.print_code === 'string' ? existingPhoto.print_code : null
     } else {
       targetPhotoId = buildGlobalPhotoId()
+      const printCode = await generateUniquePrintCode()
+      targetPhotoPrintCode = printCode
+      const isPublished = session.upload_source === 'customer_qr'
+        ? session.customer_public_consent === true
+        : false
       const { error: photoError } = await supabase.from('photos').insert([{
         global_photo_id: targetPhotoId,
         project_id: targetProjectId,
         folder_id: session.folder_id || null,
         star_rating: 0,
         status: 1,
-        is_published: false,
+        ...buildPhotoLifecycleFields({
+          uploadSource: session.upload_source || 'admin',
+          customerPublicConsent: session.customer_public_consent ?? null,
+          printCode,
+          isPublished,
+        }),
         updated_at: new Date().toISOString(),
       }])
 
@@ -904,7 +945,15 @@ export async function processDirectUploadSession(sessionId: string, options?: { 
       }
     }
 
-    const photoUpdates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const photoUpdates: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+      folder_id: session.folder_id || null,
+    }
+    if (session.upload_source === 'customer_qr') {
+      photoUpdates.upload_source = 'customer_qr'
+      photoUpdates.customer_public_consent = session.customer_public_consent ?? false
+      photoUpdates.is_published = session.customer_public_consent === true
+    }
     if (createdFileIds.original) photoUpdates.original_file_id = createdFileIds.original
     if (createdFileIds.display) {
       photoUpdates.retouched_file_id = createdFileIds.display
@@ -938,6 +987,18 @@ export async function processDirectUploadSession(sessionId: string, options?: { 
       target_photo_id: targetPhotoId,
       reason: warnings.length > 0 ? `completed with ${warnings.length} warning(s)` : session.reason,
     })
+
+    if (createdNewPhoto) {
+      await maybeAutoQueuePhoto({
+        projectId: targetProjectId,
+        folderId: session.folder_id,
+        photoId: targetPhotoId,
+        uploadSource: session.upload_source,
+        printCodeSnapshot: targetPhotoPrintCode,
+      }).catch((queueError) => {
+        console.error('[print-queue:auto-enqueue] failed:', queueError)
+      })
+    }
 
     return {
       success: true as const,

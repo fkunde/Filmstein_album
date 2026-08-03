@@ -143,3 +143,20 @@ export async function requireAdminApiAuth() {
   }
   return user
 }
+
+export async function requireSuperAdminPageAuth(nextPath: string) {
+  const user = await requireAdminPageAuth(nextPath)
+  if (user.role !== 'super_admin') {
+    redirect('/dashboard')
+  }
+  return user
+}
+
+export async function requireSuperAdminApiAuth() {
+  const user = await requireAdminApiAuth()
+  if (user instanceof Response) return user
+  if (user.role !== 'super_admin') {
+    return Response.json({ success: false, error: 'Forbidden' }, { status: 403 })
+  }
+  return user
+}

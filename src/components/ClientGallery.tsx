@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   Download,
@@ -169,7 +169,9 @@ const ClientGallery = ({
   presentation?: "default" | "preview";
 }) => {
   const params = useParams();
+  const searchParams = useSearchParams();
   const id = params?.id as string | undefined;
+  const requestedAlbumId = searchParams.get("album")?.trim() || "";
 
   const [photos, setPhotos] = useState<Photo[]>(externalPhotos ?? []);
   const [project, setProject] = useState<Project | null>(null);
@@ -298,6 +300,14 @@ const ClientGallery = ({
       return next;
     });
   }, [albumsForUi]);
+
+  useEffect(() => {
+    if (!requestedAlbumId || folders.length === 0) return;
+    const requestedFolder = folders.find((folder) => folder.id === requestedAlbumId);
+    if (!requestedFolder) return;
+    if (requestedFolder.access_mode === 'hidden') return;
+    setActiveAlbum(requestedAlbumId);
+  }, [requestedAlbumId, folders]);
 
   const [selections, setSelections] = useState<Set<string>>(
     new Set(photos.filter((p) => p.selected).map((p) => p.id)),

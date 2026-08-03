@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, LogOut } from "lucide-react";
+import { Check, Copy, LogOut, Users } from "lucide-react";
 import type { ReactNode } from "react";
 
 import SnapflareLogo from "@/components/SnapflareLogo";
@@ -108,6 +108,15 @@ const Navbar = ({ breadcrumb, actions }: { breadcrumb?: ReactNode; actions?: Rea
               </div>
 
               <div className="space-y-2 py-3">
+                {currentUser?.role === "super_admin" ? (
+                  <Button asChild variant="ghost" size="sm" className="w-full justify-start">
+                    <Link href="/admin/users" onClick={() => setMenuOpen(false)}>
+                      <Users className="h-4 w-4" />
+                      User management
+                    </Link>
+                  </Button>
+                ) : null}
+
                 <div className="rounded-lg border border-border bg-muted/30 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">

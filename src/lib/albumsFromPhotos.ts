@@ -4,8 +4,16 @@ export type FolderMeta = {
   id: string;
   name: string;
   parent_id?: string | null;
+  folder_kind?: 'standard' | 'print';
   photo_count?: number;
   access_mode?: 'public' | 'hidden' | 'password_protected';
+  customer_upload_enabled?: boolean;
+  customer_upload_token?: string | null;
+  customer_upload_default_public?: boolean;
+  customer_upload_require_public_choice?: boolean;
+  routing_prefix_rules?: Array<{ prefix: string; enabled?: boolean; sources?: Array<'admin' | 'ftp' | 'customer_qr'> }>;
+  print_mode?: 'manual' | 'semi_auto' | 'auto';
+  print_runner_status?: 'running' | 'paused';
   unlocked?: boolean;
 };
 
@@ -42,7 +50,15 @@ export function buildAlbumsFromPhotos(
       name: folder.name,
       photoCount: countByFolderId.get(folder.id) ?? counts.get(folder.id) ?? 0,
       parentId: folder.parent_id ?? undefined,
+      kind: folder.folder_kind ?? 'standard',
       accessMode: folder.access_mode ?? 'public',
+      customerUploadEnabled: folder.customer_upload_enabled === true,
+      customerUploadToken: folder.customer_upload_token || undefined,
+      customerUploadDefaultPublic: folder.customer_upload_default_public !== false,
+      customerUploadRequirePublicChoice: folder.customer_upload_require_public_choice !== false,
+      routingPrefixRules: folder.routing_prefix_rules,
+      printMode: folder.print_mode ?? 'manual',
+      printRunnerStatus: folder.print_runner_status ?? 'paused',
       unlocked: folder.unlocked === true,
       children: [],
     });
@@ -55,6 +71,7 @@ export function buildAlbumsFromPhotos(
         name: nameById.get(id) ?? id,
         photoCount,
         parentId: parentById.get(id) ?? undefined,
+        kind: 'standard',
         accessMode: 'public',
         unlocked: true,
         children: [],

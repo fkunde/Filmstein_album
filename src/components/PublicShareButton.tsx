@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PublicShareDialog from "@/components/PublicShareDialog";
@@ -12,12 +12,8 @@ interface PublicShareButtonProps {
 
 export default function PublicShareButton({ projectId, projectName }: PublicShareButtonProps) {
   const [open, setOpen] = useState(false);
-  const [shareUrl, setShareUrl] = useState(`/share/${projectId}`);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setShareUrl(`${window.location.origin}/share/${projectId}`);
-  }, [projectId]);
+  const sharePath = `/share/${projectId}`;
+  const shareUrl = typeof window === "undefined" ? sharePath : `${window.location.origin}${sharePath}`;
 
   return (
     <>

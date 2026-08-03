@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
+import QRCode from "qrcode";
 import Navbar from "@/components/Navbar";
 import {
   ArrowLeft,
@@ -24,6 +25,8 @@ import {
   Settings,
   Download,
   Loader2,
+  Copy,
+  Check,
 } from "lucide-react";
 import PhotoGrid, { type ViewMode } from "@/components/PhotoGrid";
 import StatusBadge from "@/components/StatusBadge";
@@ -32,6 +35,7 @@ import ColorFilterBar from "@/components/ColorFilterBar";
 import UploadPanel from "@/components/UploadPanel";
 import ProjectEditDialog from "@/components/ProjectEditDialog";
 import ShareModal from "@/components/ShareModal";
+import PrintQueuePanel from "@/components/PrintQueuePanel";
 import type { ColorLabel, Album, Project, Photo } from "@/data/mockData";
 import { buildAlbumsFromPhotos } from "@/lib/albumsFromPhotos";
 import { Button } from "@/components/ui/button";
@@ -43,10 +47,51 @@ interface FolderItem {
   id: string;
   name: string;
   parent_id?: string | null;
+  folder_kind?: 'standard' | 'print';
   access_mode?: 'public' | 'hidden' | 'password_protected';
   has_password?: boolean;
+  customer_upload_enabled?: boolean;
+  customer_upload_default_public?: boolean;
+  customer_upload_require_public_choice?: boolean;
+  customer_upload_token?: string | null;
+  routing_prefix_rules?: Array<{ prefix: string; enabled?: boolean; sources?: Array<'admin' | 'ftp' | 'customer_qr'> }>;
+  print_mode?: 'manual' | 'semi_auto' | 'auto';
+  print_runner_status?: 'running' | 'paused';
+  print_client_token?: string | null;
+  print_template_asset?: {
+    url?: string;
+    file_name?: string;
+    mime_type?: string;
+    file_size_bytes?: number;
+    version_token?: string;
+    bucket_name?: string;
+    object_key?: string;
+  } | null;
+  print_qr_enabled?: boolean;
+  print_qr_position?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
+  print_qr_size_ratio?: number;
+  print_qr_offset_x?: number;
+  print_qr_offset_y?: number;
+  hidden_print_upload_forces_private?: boolean;
+  customer_upload_public_choice_visible?: boolean;
   unlocked?: boolean;
   photo_count?: number;
+}
+
+type FolderConfigDraft = {
+  accessMode: 'public' | 'hidden' | 'password_protected';
+  password: string;
+  folderKind: 'standard' | 'print';
+  customerUploadEnabled: boolean;
+  customerUploadDefaultPublic: boolean;
+  customerUploadRequirePublicChoice: boolean;
+  prefixRulesText: string;
+  printMode: 'manual' | 'semi_auto' | 'auto';
+  printQrEnabled: boolean;
+  printQrPosition: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center';
+  printQrSizeRatio: string;
+  printQrOffsetX: string;
+  printQrOffsetY: string;
 }
 
 const getAllAlbumIds = (albums: Album[]): string[] =>
@@ -102,8 +147,14 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
   const [manageFoldersOpen, setManageFoldersOpen] = useState(false);
   const [managedFolderIds, setManagedFolderIds] = useState<Set<string>>(new Set());
   const [renamingFolderName, setRenamingFolderName] = useState("");
-  const [folderAccessDrafts, setFolderAccessDrafts] = useState<Record<string, { accessMode: 'public' | 'hidden' | 'password_protected'; password: string }>>({});
+  const [folderConfigDrafts, setFolderConfigDrafts] = useState<Record<string, FolderConfigDraft>>({});
   const [savingFolderAccessId, setSavingFolderAccessId] = useState<string | null>(null);
+  const [uploadingPrintTemplateId, setUploadingPrintTemplateId] = useState<string | null>(null);
+  const [removingPrintTemplateId, setRemovingPrintTemplateId] = useState<string | null>(null);
+  const [copiedUploadFolderId, setCopiedUploadFolderId] = useState<string | null>(null);
+  const [copiedPrintClientFolderId, setCopiedPrintClientFolderId] = useState<string | null>(null);
+  const [uploadQrCodeByFolderId, setUploadQrCodeByFolderId] = useState<Record<string, string>>({});
+  const [origin, setOrigin] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<"date" | "name">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -139,6 +190,12 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
       // ignore
     }
   }, [projectId]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setOrigin(window.location.origin);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,19 +275,67 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
   }, [albumsForUi]);
 
   useEffect(() => {
-    setFolderAccessDrafts((prev) => {
+    setFolderConfigDrafts((prev) => {
       const next = { ...prev }
       for (const folder of folders) {
         if (!next[folder.id]) {
           next[folder.id] = {
             accessMode: folder.access_mode || 'public',
             password: '',
+            folderKind: folder.folder_kind || 'standard',
+            customerUploadEnabled: folder.customer_upload_enabled === true,
+            customerUploadDefaultPublic: folder.customer_upload_default_public !== false,
+            customerUploadRequirePublicChoice: folder.customer_upload_require_public_choice !== false,
+            prefixRulesText: (folder.routing_prefix_rules || []).map((rule) => rule.prefix).filter(Boolean).join(', '),
+            printMode: folder.print_mode || 'manual',
+            printQrEnabled: folder.print_qr_enabled !== false,
+            printQrPosition: folder.print_qr_position || 'bottom-right',
+            printQrSizeRatio: String(folder.print_qr_size_ratio ?? 0.18),
+            printQrOffsetX: String(folder.print_qr_offset_x ?? 0),
+            printQrOffsetY: String(folder.print_qr_offset_y ?? 0),
           }
         }
       }
       return next
     })
   }, [folders]);
+
+  useEffect(() => {
+    const uploadableFolders = folders.filter((folder) => folder.customer_upload_enabled && folder.customer_upload_token && origin);
+    if (uploadableFolders.length === 0) {
+      setUploadQrCodeByFolderId({});
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const nextEntries = await Promise.all(uploadableFolders.map(async (folder) => {
+        const uploadUrl = `${origin}/upload/${folder.customer_upload_token}`;
+        try {
+          const dataUrl = await QRCode.toDataURL(uploadUrl, {
+            errorCorrectionLevel: "H",
+            margin: 2,
+            width: 480,
+            color: {
+              dark: "#111111",
+              light: "#ffffff",
+            },
+          });
+          return [folder.id, dataUrl] as const;
+        } catch {
+          return [folder.id, ""] as const;
+        }
+      }));
+
+      if (!cancelled) {
+        setUploadQrCodeByFolderId(Object.fromEntries(nextEntries));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [folders, origin]);
 
   const toggleExpand = (albumId: string) => {
     setExpandedAlbums((prev) => {
@@ -289,6 +394,10 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
   const childAlbums = useMemo(
     () => getChildAlbums(albumsForUi, activeAlbum),
     [activeAlbum, albumsForUi],
+  );
+  const activePrintFolder = useMemo(
+    () => folders.find((folder) => folder.id === activeAlbum && folder.folder_kind === "print") || null,
+    [activeAlbum, folders],
   );
 
   const handleAlbumClick = (albumId: string) => {
@@ -402,9 +511,20 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
     await Promise.all([refreshPhotos(), refreshFolders()]);
   };
 
-  const getFolderAccessDraft = (folder: FolderItem) => folderAccessDrafts[folder.id] || {
+  const getFolderConfigDraft = (folder: FolderItem): FolderConfigDraft => folderConfigDrafts[folder.id] || {
     accessMode: folder.access_mode || 'public',
     password: '',
+    folderKind: folder.folder_kind || 'standard',
+    customerUploadEnabled: folder.customer_upload_enabled === true,
+    customerUploadDefaultPublic: folder.customer_upload_default_public !== false,
+    customerUploadRequirePublicChoice: folder.customer_upload_public_choice_visible !== false,
+    prefixRulesText: (folder.routing_prefix_rules || []).map((rule) => rule.prefix).filter(Boolean).join(', '),
+    printMode: folder.print_mode || 'manual',
+    printQrEnabled: folder.print_qr_enabled !== false,
+    printQrPosition: folder.print_qr_position || 'bottom-right',
+    printQrSizeRatio: String(folder.print_qr_size_ratio ?? 0.18),
+    printQrOffsetX: String(folder.print_qr_offset_x ?? 0),
+    printQrOffsetY: String(folder.print_qr_offset_y ?? 0),
   }
 
   const handleCreateFolder = async (name: string) => {
@@ -585,6 +705,41 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
     }
   };
 
+  const handleOpenPrint = useCallback((photo: Photo) => {
+    if (typeof window === 'undefined') return
+    window.open(`/projects/${encodeURIComponent(projectId)}/print/${encodeURIComponent(photo.id)}`, '_blank', 'noopener,noreferrer')
+  }, [projectId])
+
+  const handleMarkPrinted = useCallback(async (photo: Photo) => {
+    const res = await fetch(`/api/photos/${photo.id}/mark-printed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok || body.success !== true) {
+      alert(body.error || 'Could not update print status')
+      return
+    }
+
+    const nextPrintCount = Number(body.data?.printCount) || 0
+    const nextLastPrintedAt = typeof body.data?.lastPrintedAt === 'string' ? body.data.lastPrintedAt : undefined
+
+    setPhotos((prev) => prev.map((item) => item.id === photo.id ? {
+      ...item,
+      printCount: nextPrintCount,
+      lastPrintedAt: nextLastPrintedAt,
+    } : item))
+  }, [projectId])
+
+  const handleQueuePhotoPrinted = useCallback((photoId: string, printCount: number, lastPrintedAt?: string | null) => {
+    setPhotos((prev) => prev.map((item) => item.id === photoId ? {
+      ...item,
+      printCount,
+      lastPrintedAt: lastPrintedAt || undefined,
+    } : item))
+  }, [])
+
   const handleBatchPublish = async (isPublished: boolean) => {
     if (selectedPhotoIds.size === 0) return;
     setPublishing(true);
@@ -682,7 +837,12 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
   };
 
   const handleSaveFolderAccess = async (folder: FolderItem) => {
-    const draft = getFolderAccessDraft(folder)
+    const draft = getFolderConfigDraft(folder)
+    const prefixRules = draft.prefixRulesText
+      .split(',')
+      .map((value) => value.trim().toUpperCase())
+      .filter(Boolean)
+      .map((prefix) => ({ prefix, enabled: true, sources: ['admin', 'ftp'] }))
     setSavingFolderAccessId(folder.id)
     try {
       const res = await fetch(`/api/projects/${projectId}/folders`, {
@@ -692,6 +852,27 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
           folderId: folder.id,
           accessMode: draft.accessMode,
           password: draft.accessMode === 'password_protected' ? draft.password : undefined,
+          folderKind: draft.folderKind,
+          settings: {
+            customer_upload: {
+              enabled: draft.customerUploadEnabled,
+              default_public: draft.customerUploadDefaultPublic,
+              require_public_choice: draft.customerUploadRequirePublicChoice,
+            },
+            routing: {
+              prefix_rules: prefixRules,
+            },
+            print: {
+              mode: draft.printMode,
+              qr: {
+                enabled: draft.printQrEnabled,
+                position: draft.printQrPosition,
+                size_ratio: Number(draft.printQrSizeRatio) || 0.18,
+                offset_x: Number(draft.printQrOffsetX) || 0,
+                offset_y: Number(draft.printQrOffsetY) || 0,
+              },
+            },
+          },
         }),
       })
       const body = await res.json().catch(() => ({}))
@@ -699,7 +880,7 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
         alert(body.error || 'Could not save album access')
         return
       }
-      setFolderAccessDrafts((prev) => ({ ...prev, [folder.id]: { accessMode: draft.accessMode, password: '' } }))
+      setFolderConfigDrafts((prev) => ({ ...prev, [folder.id]: { ...draft, password: '' } }))
       await refreshFolders()
       await refreshPhotos()
     } catch {
@@ -707,6 +888,134 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
     } finally {
       setSavingFolderAccessId(null)
     }
+  }
+
+  const handleUploadPrintTemplate = async (folder: FolderItem, file: File | null) => {
+    if (!file) return
+    setUploadingPrintTemplateId(folder.id)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch(`/api/projects/${projectId}/folders/${folder.id}/print-template`, {
+        method: 'POST',
+        body: formData,
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok || body.success !== true) {
+        alert(body.error || 'Could not upload print template')
+        return
+      }
+      await refreshFolders()
+    } catch {
+      alert('Could not upload print template')
+    } finally {
+      setUploadingPrintTemplateId(null)
+    }
+  }
+
+  const handleRemovePrintTemplate = async (folder: FolderItem) => {
+    setRemovingPrintTemplateId(folder.id)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/folders/${folder.id}/print-template`, {
+        method: 'DELETE',
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok || body.success !== true) {
+        alert(body.error || 'Could not remove print template')
+        return
+      }
+      await refreshFolders()
+    } catch {
+      alert('Could not remove print template')
+    } finally {
+      setRemovingPrintTemplateId(null)
+    }
+  }
+
+  const printPreviewPhotoIds = useMemo(() => {
+    const printFolderIds = new Set(folders.filter((folder) => folder.folder_kind === 'print').map((folder) => folder.id))
+    return displayPhotos.filter((photo) => photo.folderId && printFolderIds.has(photo.folderId)).map((photo) => photo.id)
+  }, [displayPhotos, folders])
+
+  const handleRotateCustomerUploadToken = async (folder: FolderItem) => {
+    setSavingFolderAccessId(folder.id)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/folders`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderId: folder.id,
+          rotateCustomerUploadToken: true,
+        }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok || body.success !== true) {
+        alert(body.error || 'Could not generate upload token')
+        return
+      }
+      await refreshFolders()
+    } catch {
+      alert('Could not generate upload token')
+    } finally {
+      setSavingFolderAccessId(null)
+    }
+  }
+
+  const handleCopyUploadLink = async (folder: FolderItem) => {
+    if (!folder.customer_upload_token || !origin) return;
+    const uploadUrl = `${origin}/upload/${folder.customer_upload_token}`;
+    try {
+      await navigator.clipboard.writeText(uploadUrl);
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = uploadUrl;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    setCopiedUploadFolderId(folder.id);
+    window.setTimeout(() => setCopiedUploadFolderId((current) => current === folder.id ? null : current), 2000);
+  }
+
+  const handleRotatePrintClientToken = async (folder: FolderItem) => {
+    setSavingFolderAccessId(folder.id)
+    try {
+      const res = await fetch(`/api/projects/${projectId}/folders`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderId: folder.id,
+          rotatePrintClientToken: true,
+        }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok || body.success !== true) {
+        alert(body.error || 'Could not generate print client token')
+        return
+      }
+      await refreshFolders()
+    } catch {
+      alert('Could not generate print client token')
+    } finally {
+      setSavingFolderAccessId(null)
+    }
+  }
+
+  const handleCopyPrintClientToken = async (folder: FolderItem) => {
+    if (!folder.print_client_token) return
+    try {
+      await navigator.clipboard.writeText(folder.print_client_token)
+    } catch {
+      const el = document.createElement("textarea");
+      el.value = folder.print_client_token;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    setCopiedPrintClientFolderId(folder.id);
+    window.setTimeout(() => setCopiedPrintClientFolderId((current) => current === folder.id ? null : current), 2000);
   }
 
   const handleDeleteManagedFolders = async () => {
@@ -1116,6 +1425,16 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
               </div>
             )}
 
+            {activePrintFolder ? (
+              <PrintQueuePanel
+                projectId={projectId}
+                folder={activePrintFolder}
+                photos={displayPhotos}
+                onFolderChanged={refreshFolders}
+                onPhotoPrinted={handleQueuePhotoPrinted}
+              />
+            ) : null}
+
             {/* All files row */}
             {displayPhotos.length > 0 && selectedPhotoIds.size === 0 && (
               <div className="flex items-center gap-3 text-sm text-foreground">
@@ -1159,6 +1478,10 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
                 onTogglePublish={handleTogglePublish}
                 onToggleAdminColorTag={handleToggleAdminColorTag}
                 onRemoveClientMark={handleRemoveClientMark}
+                projectId={projectId}
+                printPreviewPhotoIds={printPreviewPhotoIds}
+                onOpenPrint={handleOpenPrint}
+                onMarkPrinted={handleMarkPrinted}
               />
             ) : (
               <p className="py-12 text-center text-sm text-muted-foreground">
@@ -1213,7 +1536,7 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
                 ) : (
                   <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
                     {folders.map((folder) => {
-                      const accessDraft = getFolderAccessDraft(folder)
+                      const configDraft = getFolderConfigDraft(folder)
                       return (
                         <div key={folder.id} className="rounded-lg border border-border px-3 py-3 text-sm space-y-3">
                           <div className="flex items-center gap-3">
@@ -1229,20 +1552,21 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
                             />
                             <div className="min-w-0 flex-1">
                               <p className="truncate font-medium text-foreground">{folder.name}</p>
-                              <p className="text-xs text-muted-foreground">{folder.parent_id ? 'Sub-album' : 'Top-level album'} · {folder.access_mode || 'public'}</p>
+                              <p className="text-xs text-muted-foreground">{folder.parent_id ? 'Sub-album' : 'Top-level album'} · {folder.access_mode || 'public'} · {folder.folder_kind || 'standard'}</p>
                             </div>
                           </div>
 
-                          <div className="grid gap-3 md:grid-cols-[180px_1fr_auto] md:items-end">
+                          <div className="grid gap-3 md:grid-cols-3">
                             <div className="space-y-1.5">
                               <label className="text-xs font-medium text-foreground">Access mode</label>
                               <select
-                                value={accessDraft.accessMode}
-                                onChange={(e) => setFolderAccessDrafts((prev) => ({
+                                value={configDraft.accessMode}
+                                onChange={(e) => setFolderConfigDrafts((prev) => ({
                                   ...prev,
                                   [folder.id]: {
+                                    ...getFolderConfigDraft(folder),
+                                    ...prev[folder.id],
                                     accessMode: e.target.value as 'public' | 'hidden' | 'password_protected',
-                                    password: prev[folder.id]?.password || '',
                                   },
                                 }))}
                                 className="flex h-9 w-full rounded-md border border-border bg-background px-3 py-1 text-sm text-foreground"
@@ -1257,26 +1581,358 @@ export default function ProjectDetailView({ projectId }: { projectId: string }) 
                               <label className="text-xs font-medium text-foreground">Album password</label>
                               <Input
                                 type="password"
-                                value={accessDraft.password}
-                                onChange={(e) => setFolderAccessDrafts((prev) => ({
+                                value={configDraft.password}
+                                onChange={(e) => setFolderConfigDrafts((prev) => ({
                                   ...prev,
                                   [folder.id]: {
-                                    accessMode: accessDraft.accessMode,
+                                    ...getFolderConfigDraft(folder),
+                                    ...prev[folder.id],
                                     password: e.target.value,
                                   },
                                 }))}
                                 placeholder={folder.has_password ? 'Leave blank to keep current password' : 'Enter album password'}
-                                disabled={accessDraft.accessMode !== 'password_protected'}
+                                disabled={configDraft.accessMode !== 'password_protected'}
                               />
                             </div>
 
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-medium text-foreground">Album kind</label>
+                              <select
+                                value={configDraft.folderKind}
+                                onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                  ...prev,
+                                  [folder.id]: {
+                                    ...getFolderConfigDraft(folder),
+                                    ...prev[folder.id],
+                                    folderKind: e.target.value as 'standard' | 'print',
+                                  },
+                                }))}
+                                className="flex h-9 w-full rounded-md border border-border bg-background px-3 py-1 text-sm text-foreground"
+                              >
+                                <option value="standard">standard</option>
+                                <option value="print">print</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <label className="flex items-center gap-2 text-xs text-foreground">
+                              <input
+                                type="checkbox"
+                                checked={configDraft.customerUploadEnabled}
+                                onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                  ...prev,
+                                  [folder.id]: {
+                                    ...getFolderConfigDraft(folder),
+                                    ...prev[folder.id],
+                                    customerUploadEnabled: e.target.checked,
+                                  },
+                                }))}
+                              />
+                              Allow customer upload
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-foreground">
+                              <input
+                                type="checkbox"
+                                checked={configDraft.customerUploadDefaultPublic}
+                                disabled={!configDraft.customerUploadEnabled || folder.hidden_print_upload_forces_private === true}
+                                onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                  ...prev,
+                                  [folder.id]: {
+                                    ...getFolderConfigDraft(folder),
+                                    ...prev[folder.id],
+                                    customerUploadDefaultPublic: e.target.checked,
+                                  },
+                                }))}
+                              />
+                              Default public
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-foreground">
+                              <input
+                                type="checkbox"
+                                checked={configDraft.customerUploadRequirePublicChoice}
+                                disabled={!configDraft.customerUploadEnabled || folder.hidden_print_upload_forces_private === true}
+                                onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                  ...prev,
+                                  [folder.id]: {
+                                    ...getFolderConfigDraft(folder),
+                                    ...prev[folder.id],
+                                    customerUploadRequirePublicChoice: e.target.checked,
+                                  },
+                                }))}
+                              />
+                              Show public consent checkbox
+                            </label>
+                            <div className="space-y-1.5">
+                              <label className="text-xs font-medium text-foreground">Print mode</label>
+                              <select
+                                value={configDraft.printMode}
+                                disabled={configDraft.folderKind !== 'print'}
+                                onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                  ...prev,
+                                  [folder.id]: {
+                                    ...getFolderConfigDraft(folder),
+                                    ...prev[folder.id],
+                                    printMode: e.target.value as 'manual' | 'semi_auto' | 'auto',
+                                  },
+                                }))}
+                                className="flex h-9 w-full rounded-md border border-border bg-background px-3 py-1 text-sm text-foreground"
+                              >
+                                <option value="manual">manual</option>
+                                <option value="semi_auto">semi_auto</option>
+                                <option value="auto">auto</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-foreground">Auto-route filename prefixes</label>
+                            <Input
+                              value={configDraft.prefixRulesText}
+                              onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                ...prev,
+                                [folder.id]: {
+                                  ...getFolderConfigDraft(folder),
+                                  ...prev[folder.id],
+                                  prefixRulesText: e.target.value,
+                                },
+                              }))}
+                              placeholder="PNT, PRINT"
+                            />
+                            <p className="text-xs text-muted-foreground">Used only when upload has no explicit album. Applies to admin direct upload and FTP import.</p>
+                          </div>
+
+                          {configDraft.folderKind === 'print' ? (
+                            <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+                              <div className="space-y-2">
+                                <div>
+                                  <p className="text-xs font-medium text-foreground">Print template</p>
+                                  <p className="text-xs text-muted-foreground">Album-level border/template used only for print preview and print output.</p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <label className="inline-flex cursor-pointer items-center rounded-md border border-border bg-background px-3 py-2 text-xs text-foreground hover:bg-muted">
+                                    <input
+                                      type="file"
+                                      accept="image/png,image/jpeg,image/webp"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0] || null
+                                        void handleUploadPrintTemplate(folder, file)
+                                        e.currentTarget.value = ''
+                                      }}
+                                    />
+                                    {uploadingPrintTemplateId === folder.id ? 'Uploading…' : 'Upload template'}
+                                  </label>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => void handleRemovePrintTemplate(folder)}
+                                    disabled={!folder.print_template_asset || removingPrintTemplateId === folder.id}
+                                  >
+                                    {removingPrintTemplateId === folder.id ? 'Removing…' : 'Remove template'}
+                                  </Button>
+                                </div>
+                                {folder.print_template_asset ? (
+                                  <div className="space-y-2">
+                                    <p className="text-xs text-muted-foreground">{folder.print_template_asset.file_name || 'Template configured'}</p>
+                                    <img
+                                      src={`/api/projects/${projectId}/folders/${folder.id}/print-template?v=${encodeURIComponent(folder.print_template_asset.version_token || '1')}`}
+                                      alt={folder.print_template_asset.file_name || 'Print template'}
+                                      className="max-h-48 rounded-md border border-border bg-background object-contain"
+                                    />
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">No template uploaded yet.</p>
+                                )}
+                              </div>
+
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <label className="flex items-center gap-2 text-xs text-foreground">
+                                  <input
+                                    type="checkbox"
+                                    checked={configDraft.printQrEnabled}
+                                    onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                      ...prev,
+                                      [folder.id]: {
+                                        ...getFolderConfigDraft(folder),
+                                        ...prev[folder.id],
+                                        printQrEnabled: e.target.checked,
+                                      },
+                                    }))}
+                                  />
+                                  Enable print QR
+                                </label>
+
+                                <div className="space-y-1.5">
+                                  <label className="text-xs font-medium text-foreground">QR position</label>
+                                  <select
+                                    value={configDraft.printQrPosition}
+                                    onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                      ...prev,
+                                      [folder.id]: {
+                                        ...getFolderConfigDraft(folder),
+                                        ...prev[folder.id],
+                                        printQrPosition: e.target.value as 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center',
+                                      },
+                                    }))}
+                                    className="flex h-9 w-full rounded-md border border-border bg-background px-3 py-1 text-sm text-foreground"
+                                  >
+                                    <option value="top-left">top-left</option>
+                                    <option value="top-right">top-right</option>
+                                    <option value="bottom-left">bottom-left</option>
+                                    <option value="bottom-right">bottom-right</option>
+                                    <option value="center">center</option>
+                                  </select>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <label className="text-xs font-medium text-foreground">QR size ratio</label>
+                                  <Input
+                                    value={configDraft.printQrSizeRatio}
+                                    onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                      ...prev,
+                                      [folder.id]: {
+                                        ...getFolderConfigDraft(folder),
+                                        ...prev[folder.id],
+                                        printQrSizeRatio: e.target.value,
+                                      },
+                                    }))}
+                                    placeholder="0.18"
+                                  />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-foreground">QR offset X</label>
+                                    <Input
+                                      value={configDraft.printQrOffsetX}
+                                      onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                        ...prev,
+                                        [folder.id]: {
+                                          ...getFolderConfigDraft(folder),
+                                          ...prev[folder.id],
+                                          printQrOffsetX: e.target.value,
+                                        },
+                                      }))}
+                                      placeholder="0"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <label className="text-xs font-medium text-foreground">QR offset Y</label>
+                                    <Input
+                                      value={configDraft.printQrOffsetY}
+                                      onChange={(e) => setFolderConfigDrafts((prev) => ({
+                                        ...prev,
+                                        [folder.id]: {
+                                          ...getFolderConfigDraft(folder),
+                                          ...prev[folder.id],
+                                          printQrOffsetY: e.target.value,
+                                        },
+                                      }))}
+                                      placeholder="0"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {folder.hidden_print_upload_forces_private ? (
+                            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                              This hidden print album forces customer uploads to stay private. The upload page will skip the public consent checkbox.
+                            </div>
+                          ) : null}
+
+                          {configDraft.folderKind === 'print' ? (
+                            <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                  <p className="text-xs font-medium text-foreground">Desktop print client token</p>
+                                  <p className="break-all text-xs text-muted-foreground">
+                                    {folder.print_client_token || 'No token yet'}
+                                  </p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => void handleCopyPrintClientToken(folder)}
+                                    disabled={!folder.print_client_token}
+                                  >
+                                    {copiedPrintClientFolderId === folder.id ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Copy className="mr-1.5 h-3.5 w-3.5" />}
+                                    {copiedPrintClientFolderId === folder.id ? 'Copied!' : 'Copy token'}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => void handleRotatePrintClientToken(folder)}
+                                    disabled={savingFolderAccessId === folder.id}
+                                  >
+                                    {folder.print_client_token ? 'Rotate token' : 'Generate token'}
+                                  </Button>
+                                </div>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                Use this token in the desktop client to bind directly to this print album without an admin login.
+                              </p>
+                            </div>
+                          ) : null}
+
+                          <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-xs font-medium text-foreground">Customer upload link</p>
+                                <p className="break-all text-xs text-muted-foreground">
+                                  {folder.customer_upload_token && origin ? `${origin}/upload/${folder.customer_upload_token}` : folder.customer_upload_token ? `/upload/${folder.customer_upload_token}` : 'No token yet'}
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => void handleCopyUploadLink(folder)}
+                                  disabled={!folder.customer_upload_token || !origin}
+                                >
+                                  {copiedUploadFolderId === folder.id ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Copy className="mr-1.5 h-3.5 w-3.5" />}
+                                  {copiedUploadFolderId === folder.id ? 'Copied!' : 'Copy upload link'}
+                                </Button>
+                                <Button type="button" variant="outline" onClick={() => void handleRotateCustomerUploadToken(folder)} disabled={savingFolderAccessId === folder.id || !configDraft.customerUploadEnabled}>
+                                  {folder.customer_upload_token ? 'Rotate token' : 'Generate token'}
+                                </Button>
+                              </div>
+                            </div>
+                            {folder.customer_upload_token ? (
+                              <div className="grid gap-3 md:grid-cols-[120px_minmax(0,1fr)] md:items-center">
+                                <div className="flex h-[120px] w-[120px] items-center justify-center overflow-hidden rounded-lg border border-border bg-white p-2">
+                                  {uploadQrCodeByFolderId[folder.id] ? (
+                                    <img
+                                      src={uploadQrCodeByFolderId[folder.id]}
+                                      alt={`Upload QR for ${folder.name}`}
+                                      className="h-full w-full object-contain"
+                                    />
+                                  ) : (
+                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                  )}
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-xs font-medium text-foreground">Upload QR code</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Scan to open the customer upload page directly.
+                                  </p>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="flex justify-end">
                             <Button
                               type="button"
                               variant="outline"
                               onClick={() => void handleSaveFolderAccess(folder)}
-                              disabled={savingFolderAccessId === folder.id || (accessDraft.accessMode === 'password_protected' && !folder.has_password && !accessDraft.password.trim())}
+                              disabled={savingFolderAccessId === folder.id || (configDraft.accessMode === 'password_protected' && !folder.has_password && !configDraft.password.trim())}
                             >
-                              {savingFolderAccessId === folder.id ? 'Saving…' : 'Save access'}
+                              {savingFolderAccessId === folder.id ? 'Saving…' : 'Save album settings'}
                             </Button>
                           </div>
                         </div>

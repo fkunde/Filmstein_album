@@ -28,6 +28,10 @@ interface PhotoGridProps {
   onTogglePublish?: (photo: Photo, isPublished: boolean) => Promise<void> | void;
   forceSquareCards?: boolean;
   project?: Project | null;
+  projectId?: string;
+  printPreviewPhotoIds?: string[];
+  onOpenPrint?: (photo: Photo) => void;
+  onMarkPrinted?: (photo: Photo) => Promise<void> | void;
   onToggleClientMark?: (photo: Photo) => Promise<void> | void;
   onRemoveClientMark?: (photo: Photo, viewerSessionId: string) => Promise<void> | void;
   onToggleAdminColorTag?: (photoId: string, color: "red" | "green" | "blue" | "yellow" | "purple") => void;
@@ -49,6 +53,10 @@ const PhotoGrid = ({
   onTogglePublish,
   forceSquareCards = false,
   project = null,
+  projectId,
+  printPreviewPhotoIds = [],
+  onOpenPrint,
+  onMarkPrinted,
   onToggleClientMark,
   onRemoveClientMark,
   onToggleAdminColorTag,
@@ -66,7 +74,8 @@ const PhotoGrid = ({
         <div className="flex flex-col gap-1">
           {photos.map((photo, i) => {
             const listThumbSrc = ((photo as Photo & { thumbUrl?: string }).thumbUrl || photo.url || "").trim();
-            const isProcessingPlaceholder = Boolean(photo.processingState) && (!listThumbSrc || photo.isPlaceholder);
+            const isStillProcessing = Boolean(photo.processingState) && photo.processingState !== "failed";
+            const isProcessingPlaceholder = isStillProcessing || (photo.processingState === "failed" && (!listThumbSrc || photo.isPlaceholder));
             const isPreviewUnavailable = isProcessingPlaceholder || !listThumbSrc;
             return (
               <div
@@ -117,7 +126,9 @@ const PhotoGrid = ({
                       </div>
                     )}
                   </div>
-                  <p className="text-xs text-muted-foreground">{photo.processingMessage || (!listThumbSrc ? "Preview not ready yet" : photo.tag)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {photo.processingMessage || (isStillProcessing ? "Processing in background…" : !listThumbSrc ? "Preview not ready yet" : photo.tag)}
+                  </p>
                 </div>
                 <p className="hidden text-xs text-muted-foreground sm:block">{photo.uploadedAt}</p>
               </div>
@@ -136,6 +147,9 @@ const PhotoGrid = ({
             onTogglePublish={onTogglePublish}
             clientDownloadMode={clientDownloadMode}
             project={project}
+            projectId={projectId}
+            printPreviewPhotoIds={printPreviewPhotoIds}
+            onMarkPrinted={onMarkPrinted}
             onToggleClientMark={onToggleClientMark}
             onRemoveClientMark={onRemoveClientMark}
           />
@@ -165,6 +179,7 @@ const PhotoGrid = ({
               clientDownloadMode={clientDownloadMode}
               forceSquare={forceSquareCards}
               onToggleAdminColorTag={onToggleAdminColorTag}
+              onPrint={printPreviewPhotoIds.includes(photo.id) ? (() => onOpenPrint?.(photo)) : undefined}
             />
           </div>
         ))}
@@ -181,6 +196,9 @@ const PhotoGrid = ({
           onTogglePublish={onTogglePublish}
           clientDownloadMode={clientDownloadMode}
           project={project}
+          projectId={projectId}
+          printPreviewPhotoIds={printPreviewPhotoIds}
+          onMarkPrinted={onMarkPrinted}
           onToggleClientMark={onToggleClientMark}
           onRemoveClientMark={onRemoveClientMark}
         />

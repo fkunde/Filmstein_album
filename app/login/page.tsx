@@ -3,23 +3,26 @@ import LoginForm from "@/components/LoginForm";
 import { getAuthenticatedAdminUser } from "@/lib/auth/session";
 
 type PageProps = {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ mode?: string; next?: string }>;
 };
 
 function normalizeNextPath(nextPath: string | undefined) {
-  if (!nextPath || !nextPath.startsWith("/")) return "/";
-  if (nextPath.startsWith("//")) return "/";
+  if (!nextPath) return "/dashboard";
+  if (!nextPath.startsWith("/")) return "/dashboard";
+  if (nextPath.startsWith("//")) return "/dashboard";
+  if (nextPath === "/login") return "/dashboard";
   return nextPath;
 }
 
 export default async function LoginPage({ searchParams }: PageProps) {
   const adminUser = await getAuthenticatedAdminUser();
-  const { next } = await searchParams;
+  const { mode, next } = await searchParams;
   const nextPath = normalizeNextPath(next);
+  const initialMode = mode === "register" ? "register" : "login";
 
   if (adminUser) {
     redirect(nextPath);
   }
 
-  return <LoginForm nextPath={nextPath} />;
+  return <LoginForm initialMode={initialMode} nextPath={nextPath} />;
 }

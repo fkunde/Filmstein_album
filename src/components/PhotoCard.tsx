@@ -20,6 +20,7 @@ interface PhotoCardProps {
   clientDownloadMode?: boolean;
   forceSquare?: boolean;
   onToggleAdminColorTag?: (photoId: string, color: Exclude<keyof typeof colorLabelMap, 'none'>) => void;
+  onPrint?: () => void;
 }
 
 const PhotoCard = ({
@@ -35,11 +36,12 @@ const PhotoCard = ({
   clientDownloadMode = false,
   forceSquare = false,
   onToggleAdminColorTag,
+  onPrint,
 }: PhotoCardProps) => {
   const adminColorTags = photo.adminColorTags ?? []
   const isEdited = (photo.versionCount || 1) > 1;
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
-  const [imageFailed, setImageFailed] = useState(false);
+  const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -81,8 +83,14 @@ const PhotoCard = ({
 
   const imageSrc = ((photo as Photo & { thumbUrl?: string; displayUrl?: string }).thumbUrl || photo.url || "").trim();
   const uploadedAt = photo.uploadedAt ? new Date(photo.uploadedAt).toLocaleString() : "Unknown time";
-  const isImageUnavailable = !imageSrc || imageFailed;
-  const isProcessingPlaceholder = Boolean(photo.processingState) && (isImageUnavailable || photo.isPlaceholder);
+  const printStatusLabel = photo.printCode || photo.printCount || photo.lastPrintedAt
+    ? (photo.printCount && photo.printCount > 0
+      ? `Printed ${photo.printCount} time${photo.printCount === 1 ? "" : "s"}`
+      : "Not printed yet")
+    : "";
+  const isImageUnavailable = !imageSrc || failedImageSrc === imageSrc;
+  const isStillProcessing = Boolean(photo.processingState) && photo.processingState !== "failed";
+  const isProcessingPlaceholder = isStillProcessing || (photo.processingState === "failed" && (isImageUnavailable || photo.isPlaceholder));
   const isPendingVisual = isProcessingPlaceholder || isImageUnavailable;
   const processingLabel = photo.processingMessage || (photo.processingState === "failed"
     ? "Processing failed"
@@ -96,10 +104,6 @@ const PhotoCard = ({
     : photo.processingState
       ? processingLabel
       : "Preview not ready yet");
-
-  useEffect(() => {
-    setImageFailed(false);
-  }, [imageSrc, photo.id]);
 
   if (variant === "overlay") {
     return (
@@ -130,7 +134,7 @@ const PhotoCard = ({
                 forceSquare ? 'object-cover' : 'object-contain bg-muted'
               )}
               loading="lazy"
-              onError={() => setImageFailed(true)}
+              onError={() => setFailedImageSrc(imageSrc)}
             />
           )}
         </div>
@@ -197,7 +201,7 @@ const PhotoCard = ({
               selected ? "scale-[0.97]" : "group-hover:scale-[1.02]",
             )}
             loading="lazy"
-            onError={() => setImageFailed(true)}
+            onError={() => setFailedImageSrc(imageSrc)}
           />
         )}
 
@@ -210,6 +214,12 @@ const PhotoCard = ({
             </span>
           </div>
         )}
+
+        {photo.uploadSource === 'customer_qr' && photo.customerPublicConsent === false ? (
+          <div className="absolute left-2 bottom-2 z-20 rounded-md bg-black/65 px-2 py-1 text-[10px] font-medium text-white">
+            Customer private
+          </div>
+        ) : null}
 
         {photo.clientMarked && (
           <div className="absolute left-2 top-2 z-20 rounded-full bg-black/45 p-1 text-white">
@@ -289,9 +299,28 @@ const PhotoCard = ({
             </span>
           </div>
           <p className="text-xs text-muted-foreground">{uploadedAt}</p>
+          {printStatusLabel ? (
+            <p className="mt-1 text-xs text-muted-foreground">{printStatusLabel}</p>
+          ) : null}
         </div>
-        {!hideDownloadButton && !isPendingVisual && (
-          <div className="relative z-30 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" ref={menuRef}>
+        {(!hideDownloadButton || onPrint) && !isPendingVisual && (
+          <div className="relative z-30 flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+            {onPrint ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onPrint();
+                }}
+                className="rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title="Print"
+                aria-label="Print"
+              >
+                Print
+              </button>
+            ) : null}
+            {!hideDownloadButton ? (
+            <div className="relative" ref={menuRef}>
             <button
               type="button"
               onClick={(e) => {
@@ -347,6 +376,8 @@ const PhotoCard = ({
                 )}
               </div>
             )}
+            </div>
+            ) : null}
           </div>
         )}
       </div>

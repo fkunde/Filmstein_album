@@ -1,7 +1,7 @@
 "use client";
 
 import { type FormEvent, useMemo, useState } from "react";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, Mail } from "lucide-react";
 import { useRouter } from "next/navigation";
 import SnapflareLogo from "@/components/SnapflareLogo";
 import { Button } from "@/components/ui/button";
@@ -10,9 +10,9 @@ import { Input } from "@/components/ui/input";
 
 type AuthMode = "login" | "register";
 
-export default function LoginForm({ nextPath }: { nextPath: string }) {
+export default function LoginForm({ initialMode = "login", nextPath }: { initialMode?: AuthMode; nextPath: string }) {
   const router = useRouter();
-  const [mode, setMode] = useState<AuthMode>("login");
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [inviteCode, setInviteCode] = useState("");
@@ -71,7 +71,7 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
             <SnapflareLogo markClassName="!h-32 !w-auto sm:!h-36" />
           </div>
           <div className="text-center">
-            <CardDescription>{mode === "login" ? "Log in to access the dashboard." : "Create an admin account with an invite code."}</CardDescription>
+            <CardDescription>{mode === "login" ? "Log in to access the dashboard." : "Create an account with your invite code."}</CardDescription>
           </div>
         </CardHeader>
         <CardContent>
@@ -125,6 +125,16 @@ export default function LoginForm({ nextPath }: { nextPath: string }) {
                   onChange={(event) => setInviteCode(event.target.value)}
                   placeholder="Enter your invite code"
                 />
+                <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+                  <Mail className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Need an invite code? Email{" "}
+                    <a href="mailto:info@filmstein.com" className="font-medium text-foreground hover:text-primary hover:underline">
+                      info@filmstein.com
+                    </a>
+                    .
+                  </span>
+                </p>
               </div>
             ) : null}
             {error ? (
