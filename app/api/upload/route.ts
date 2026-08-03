@@ -10,6 +10,8 @@ import { extractPhotoIdFromFileName, extractVersionNoFromFileName, looksLikeReto
 import { BRANCH_TYPE_CLIENT_PREVIEW, buildWatermarkedClientPreview, getClientPreviewFileName, getClientPreviewKey } from '@/lib/clientPreviewAsset'
 import { getWatermarkVersionSignature } from '@/lib/clientWatermark'
 import type { Project } from '@/data/mockData'
+import { resolveUploadFolderByPrefix } from '@/lib/folderSettings'
+import { generateUniquePrintCode } from '@/lib/printCode'
 
 const BRANCH_TYPE_ORIGINAL = 'original';
 const BRANCH_TYPE_RAW = 'raw';
@@ -438,6 +440,16 @@ export async function POST(req: Request) {
       return new Response(JSON.stringify({ success: false, error: 'Missing projectId or photoId' }), { status: 400 });
     }
 
+    const resolvedFolder = projectId
+      ? await resolveUploadFolderByPrefix({
+          projectId: projectId.trim(),
+          explicitFolderId: folderId,
+          fileName: file.name,
+          source: 'ftp',
+        })
+      : { folderId: folderId || null, matchedByPrefix: false as const };
+    const effectiveFolderId = resolvedFolder.folderId;
+
     let targetPhotoId = photoId?.trim() || null;
     let targetProjectId = projectId?.trim() || null;
     let createdNewPhoto = false;
@@ -484,15 +496,21 @@ export async function POST(req: Request) {
       targetProjectId = String(existingPhoto.project_id);
     } else {
       targetPhotoId = buildGlobalPhotoId();
+      const printCode = await generateUniquePrintCode();
       const { error: photoError } = await supabase
         .from('photos')
         .insert([{
           global_photo_id: targetPhotoId,
           project_id: targetProjectId,
-          folder_id: folderId || null,
+          folder_id: effectiveFolderId,
           star_rating: 0,
           status: 1,
           is_published: false,
+          upload_source: 'ftp',
+          customer_public_consent: null,
+          print_code: printCode,
+          print_count: 0,
+          last_printed_at: null,
           updated_at: new Date().toISOString(),
         }]);
 
@@ -810,6 +828,8 @@ export async function POST(req: Request) {
 
     const photoUpdates: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
+      folder_id: effectiveFolderId,
+      upload_source: 'ftp',
     };
 
     if (createdFileIds.original) {

@@ -10,19 +10,22 @@ import { getClientWatermarkConfig, getWatermarkVersionSignature } from "@/lib/cl
 
 interface PhotoPreviewModalProps {
   photos: Photo[];
+  projectId?: string;
+  printPreviewPhotoIds?: string[];
   initialIndex: number;
   open: boolean;
   onClose: () => void;
   onDeleteCurrent?: (photo: Photo) => Promise<void> | void;
   onDeleteAllVersions?: (photo: Photo) => Promise<void> | void;
   onTogglePublish?: (photo: Photo, isPublished: boolean) => Promise<void> | void;
+  onMarkPrinted?: (photo: Photo) => Promise<void> | void;
   clientDownloadMode?: boolean;
   project?: Project | null;
   onToggleClientMark?: (photo: Photo) => Promise<void> | void;
   onRemoveClientMark?: (photo: Photo, viewerSessionId: string) => Promise<void> | void;
 }
 
-const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurrent, onDeleteAllVersions, onTogglePublish, clientDownloadMode = false, project = null, onToggleClientMark, onRemoveClientMark }: PhotoPreviewModalProps) => {
+const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initialIndex, open, onClose, onDeleteCurrent, onDeleteAllVersions, onTogglePublish, onMarkPrinted, clientDownloadMode = false, project = null, onToggleClientMark, onRemoveClientMark }: PhotoPreviewModalProps) => {
   const [index, setIndex] = useState(initialIndex);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -32,7 +35,9 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
   const [highResRequested, setHighResRequested] = useState(false);
   const [highResLoaded, setHighResLoaded] = useState(false);
   const [highResFailed, setHighResFailed] = useState(false);
+  const [printPreviewEnabled, setPrintPreviewEnabled] = useState(false);
   const [previewSrcOverride, setPreviewSrcOverride] = useState<string | null>(null);
+  const [markingPrinted, setMarkingPrinted] = useState(false);
   const previewOpenedAtRef = useRef<number | null>(null)
   const imageRequestStartedAtRef = useRef<number | null>(null)
 
@@ -90,9 +95,18 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
     setHighResRequested(false)
     setHighResLoaded(false)
     setHighResFailed(false)
+    setPrintPreviewEnabled(false)
     setPreviewSrcOverride(null)
   }, [index, open, photos.length])
 
+  const canPreviewPrint = Boolean(projectId && !clientDownloadMode && printPreviewPhotoIds.includes(photo.id))
+  const lastPrintedLabel = photo.lastPrintedAt ? new Date(photo.lastPrintedAt).toLocaleString() : ''
+  const printStatusLabel = (photo.printCount || 0) > 0
+    ? `Printed ${photo.printCount} time${photo.printCount === 1 ? '' : 's'}`
+    : 'Not printed yet'
+  const printPreviewSrc = canPreviewPrint && projectId
+    ? `/api/photos/${photo.id}/print-render?projectId=${encodeURIComponent(projectId)}&ts=${photo.id}-print-${index}`
+    : ''
   const previewFallbackSrc = photo
     ? `/api/photos/${photo.id}/client-render?mode=preview&disposition=inline&ts=${photo.id}-${index}&wv=${encodeURIComponent(watermarkVersionSignature)}${debugPreview ? '&debug=1' : ''}`
     : ''
@@ -103,7 +117,9 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
     && (!watermarkConfig.enabled || photo.clientPreviewWatermarkSignature === watermarkVersionSignature)
   )
 
-  const previewSrc = previewSrcOverride || (photo
+  const previewSrc = printPreviewEnabled && printPreviewSrc
+    ? printPreviewSrc
+    : previewSrcOverride || (photo
     ? (clientDownloadMode
       ? (canUseDirectClientPreview ? photo.clientPreviewUrl! : previewFallbackSrc)
       : (photo.displayUrl || photo.file_url || photo.url))
@@ -115,14 +131,15 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
       : (photo.originalUrl || photo.retouchedOriginalUrl || photo.displayUrl || photo.file_url || photo.url))
     : ''
 
-  const activeSrc = highResRequested ? highResSrc : previewSrc
+  const activeSrc = !printPreviewEnabled && highResRequested ? highResSrc : previewSrc
   const previewPath = useMemo(() => {
+    if (printPreviewEnabled) return 'print-preview'
     if (!clientDownloadMode) return 'non-client-preview'
     if (highResRequested) return 'client-render-download'
     if (previewSrcOverride === previewFallbackSrc) return 'client-render-fallback'
     if (canUseDirectClientPreview && photo?.clientPreviewUrl && previewSrc === photo.clientPreviewUrl) return 'clientPreviewUrl-direct'
     return 'client-render-preview'
-  }, [clientDownloadMode, highResRequested, previewFallbackSrc, previewSrcOverride, photo?.clientPreviewUrl, previewSrc, canUseDirectClientPreview])
+  }, [clientDownloadMode, highResRequested, previewFallbackSrc, previewSrcOverride, photo?.clientPreviewUrl, previewSrc, canUseDirectClientPreview, printPreviewEnabled])
 
   useEffect(() => {
     if (!open || !photo) return
@@ -151,6 +168,21 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
   }, [open, activeSrc, debugPreview, previewPath, photo?.id])
 
   if (!open || photos.length === 0 || !portalReady || !photo) return null;
+
+  const handleOpenPrintPage = () => {
+    if (!canPreviewPrint || !projectId || typeof window === 'undefined') return
+    window.open(`/projects/${encodeURIComponent(projectId)}/print/${encodeURIComponent(photo.id)}`, '_blank', 'noopener,noreferrer')
+  }
+
+  const handleMarkPrinted = async () => {
+    if (!onMarkPrinted) return
+    setMarkingPrinted(true)
+    try {
+      await onMarkPrinted(photo)
+    } finally {
+      setMarkingPrinted(false)
+    }
+  }
 
   const openDownload = async (variant: "current" | "retouched-original" | "original" | "client-display" | "client-original") => {
     const url = clientDownloadMode
@@ -203,6 +235,11 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
             Unpublished
           </span>
         )}
+        {canPreviewPrint && (
+          <span className="inline-flex items-center rounded-md bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+            {printStatusLabel}
+          </span>
+        )}
       </div>
 
       <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
@@ -234,6 +271,49 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
             }}
           >
             {photo.isPublished ? 'Unpublish' : 'Publish'}
+          </Button>
+        )}
+        {canPreviewPrint && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-white hover:bg-white/10"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleOpenPrintPage();
+            }}
+          >
+            Print
+          </Button>
+        )}
+        {canPreviewPrint && onMarkPrinted && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-white hover:bg-white/10"
+            disabled={markingPrinted}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleMarkPrinted();
+            }}
+          >
+            {markingPrinted ? 'Saving…' : 'Mark as printed'}
+          </Button>
+        )}
+        {canPreviewPrint && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-white hover:bg-white/10"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPrintPreviewEnabled((prev) => !prev);
+              setImageLoading(true);
+              setHighResRequested(false);
+              setHighResFailed(false);
+            }}
+          >
+            {printPreviewEnabled ? 'View Photo' : 'Print Preview'}
           </Button>
         )}
         {onDeleteCurrent && (
@@ -398,7 +478,7 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
       </button>
 
       <div className="absolute bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-1/2 flex -translate-x-1/2 items-center gap-3 text-sm text-white/70">
-        {!highResLoaded && (
+        {!printPreviewEnabled && !highResLoaded && (
           <button
             type="button"
             className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/85 transition hover:bg-white/10 disabled:opacity-50"
@@ -413,10 +493,15 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
             {highResRequested && imageLoading ? 'Loading original…' : 'View Original'}
           </button>
         )}
+        {printPreviewEnabled && (
+          <span className="rounded-full border border-white/15 bg-white/5 px-3 py-1 text-xs text-white/85">
+            Print preview
+          </span>
+        )}
         <span>{index + 1} / {photos.length}</span>
       </div>
 
-      {highResFailed && (
+      {highResFailed && !printPreviewEnabled && (
         <div className="absolute bottom-[calc(max(1.5rem,env(safe-area-inset-bottom))+2.5rem)] left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/10 bg-black/60 px-3 py-1 text-xs text-white/85 backdrop-blur">
           Original image unavailable. Current image is the highest available quality.
         </div>
@@ -428,6 +513,19 @@ const PhotoPreviewModal = ({ photos, initialIndex, open, onClose, onDeleteCurren
           <p className="mt-1 text-xs text-white/75">{photo.uploadedAt || 'Unknown time'}</p>
           {!clientDownloadMode && (
             <div className="mt-3 space-y-2">
+              {canPreviewPrint && (
+                <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-white/75">Print status</p>
+                    <span className="text-xs text-white/85">{printStatusLabel}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/60">
+                    {photo.printCode ? <span>Code: {photo.printCode}</span> : null}
+                    <span>Count: {photo.printCount ?? 0}</span>
+                    {lastPrintedLabel ? <span>Last printed: {lastPrintedLabel}</span> : null}
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs font-medium uppercase tracking-wide text-white/75">Client Marks</p>
                 <span className="text-xs text-white/60">{photo.clientMarkCount ?? photo.clientMarkDetails?.length ?? 0} marks</span>

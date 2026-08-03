@@ -66,7 +66,15 @@ export interface Album {
   name: string;
   photoCount: number;
   parentId?: string;
+  kind?: 'standard' | 'print';
   accessMode?: 'public' | 'hidden' | 'password_protected';
+  customerUploadEnabled?: boolean;
+  customerUploadToken?: string;
+  customerUploadDefaultPublic?: boolean;
+  customerUploadRequirePublicChoice?: boolean;
+  routingPrefixRules?: Array<{ prefix: string; enabled?: boolean; sources?: Array<'admin' | 'ftp' | 'customer_qr'> }>;
+  printMode?: 'manual' | 'semi_auto' | 'auto';
+  printRunnerStatus?: 'running' | 'paused';
   unlocked?: boolean;
   children?: Album[];
 }
@@ -112,6 +120,11 @@ export interface Photo {
   latestVersionNo?: number;
   firstVersionNo?: number;
   isPublished?: boolean;
+  uploadSource?: 'admin' | 'ftp' | 'customer_qr';
+  customerPublicConsent?: boolean | null;
+  printCode?: string;
+  printCount?: number;
+  lastPrintedAt?: string;
   clientMarked?: boolean;
   clientMarkCount?: number;
   hasClientMarks?: boolean;

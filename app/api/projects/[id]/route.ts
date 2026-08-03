@@ -74,7 +74,7 @@ export async function GET(req: Request, context: RouteContext) {
 
     let photosQuery = supabase
       .from('photos')
-      .select('global_photo_id, project_id, folder_id, original_file_id, retouched_file_id, color_label, status, metadata, updated_at, is_published')
+      .select('global_photo_id, project_id, folder_id, original_file_id, retouched_file_id, color_label, status, metadata, updated_at, is_published, upload_source, customer_public_consent, print_code, print_count, last_printed_at')
       .eq('project_id', id)
 
     if (publishedOnly) {
@@ -104,6 +104,17 @@ export async function GET(req: Request, context: RouteContext) {
 
     const folderAccessById = new Map((folderRows ?? []).map((folder) => [folder.id, extractFolderShareAccessConfig(folder)]))
     const photoRows = (rawPhotoRows ?? []).filter((row) => {
+      const metadata = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+        ? row.metadata as Record<string, unknown>
+        : null
+      const pendingUpload = metadata?.pending_upload && typeof metadata.pending_upload === 'object'
+        ? metadata.pending_upload as Record<string, unknown>
+        : null
+
+      if (publishedOnly && pendingUpload && typeof pendingUpload.status === 'string' && pendingUpload.status !== 'failed') {
+        return false
+      }
+
       if (!publishedOnly || !row.folder_id) return true
       const access = folderAccessById.get(row.folder_id)
       if (!access || access.access_mode === 'public') return true

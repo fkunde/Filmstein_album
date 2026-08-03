@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderOpen, ChevronRight, ChevronDown, Image as ImageIcon, EyeOff, Lock } from "lucide-react";
+import { FolderOpen, ChevronRight, ChevronDown, Image as ImageIcon, EyeOff, Lock, Printer, Upload } from "lucide-react";
 import type { Album } from "@/data/mockData";
 
 interface AlbumTreeProps {
@@ -52,10 +52,13 @@ const AlbumTree = ({ albums, activeAlbumId, onSelect, depth = 0, expandedIds, on
               )}
               {album.id === "all" ? (
                 <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+              ) : album.kind === 'print' ? (
+                <Printer className="h-3.5 w-3.5 shrink-0" />
               ) : (
                 <FolderOpen className="h-3.5 w-3.5 shrink-0" />
               )}
               <span className="truncate">{album.name}</span>
+              {album.id !== 'all' && album.customerUploadEnabled ? <Upload className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
               {album.id !== 'all' && album.accessMode === 'password_protected' ? <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
               {album.id !== 'all' && album.accessMode === 'hidden' ? <EyeOff className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : null}
               <span className="ml-auto text-xs text-muted-foreground">{album.photoCount}</span>

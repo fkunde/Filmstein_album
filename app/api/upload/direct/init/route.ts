@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase/server'
 import { r2 } from '@/lib/r2/client'
 import { analyzeUploadMetadata, buildR2PublicUrl, buildUploadTempKey, createPlaceholderPhoto } from '@/lib/uploadDirect'
 import type { UploadAnalysisResult } from '@/lib/uploadAnalysis'
+import { resolveUploadFolderByPrefix } from '@/lib/folderSettings'
 
 export async function POST(req: Request) {
   const auth = await requireAdminApiAuth()
@@ -37,6 +38,13 @@ export async function POST(req: Request) {
     if (!permission.canManageProject) {
       return Response.json({ success: false, error: 'Forbidden' }, { status: 403 })
     }
+
+    const resolvedFolder = await resolveUploadFolderByPrefix({
+      projectId,
+      explicitFolderId: folderId,
+      fileName,
+      source: 'admin',
+    })
 
     const normalizedAnalysis = analysis && analysis.fileName === fileName && analysis.checksumSha256 === checksumSha256
       ? analysis
@@ -70,7 +78,7 @@ export async function POST(req: Request) {
       .from('upload_sessions')
       .insert([{
         project_id: projectId,
-        folder_id: folderId,
+        folder_id: resolvedFolder.folderId,
         target_photo_id: uploadDecision === 'overwrite' ? normalizedAnalysis.matchedPhotoId : normalizedAnalysis.classification === 'retouch_upload' ? normalizedAnalysis.matchedPhotoId : null,
         file_name: fileName,
         mime_type: mimeType,
@@ -80,6 +88,8 @@ export async function POST(req: Request) {
         upload_category: uploadCategory,
         upload_decision: uploadDecision,
         classification: normalizedAnalysis.classification,
+        upload_source: 'admin',
+        customer_public_consent: null,
         matched_photo_id: normalizedAnalysis.matchedPhotoId,
         matched_version_no: normalizedAnalysis.matchedVersionNo,
         next_version_no: normalizedAnalysis.nextVersionNo,
@@ -106,9 +116,12 @@ export async function POST(req: Request) {
       try {
         targetPhotoId = await createPlaceholderPhoto({
           projectId,
-          folderId,
+          folderId: resolvedFolder.folderId,
           fileName,
           sessionId: insertedSession.id,
+          uploadSource: 'admin',
+          customerPublicConsent: null,
+          isPublished: false,
         })
       } catch (error) {
         await supabase.from('upload_sessions').delete().eq('id', insertedSession.id)
@@ -161,6 +174,8 @@ export async function POST(req: Request) {
           'Content-Type': mimeType,
         },
         analysis: normalizedAnalysis,
+        resolvedFolderId: resolvedFolder.folderId,
+        matchedByPrefix: resolvedFolder.matchedByPrefix,
       },
     })
   } catch (error) {
