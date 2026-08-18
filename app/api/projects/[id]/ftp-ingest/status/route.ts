@@ -112,20 +112,6 @@ export async function GET(_req: Request, context: RouteContext) {
       }
     }
 
-    const failedStatusUrl = `${baseUrl}/api/ingest/jobs?status=failed&project=${encodeURIComponent(ftpIngest.project_code)}`
-    try {
-      const failedJobsRes = await fetch(failedStatusUrl)
-      const failedJobsBody = await failedJobsRes.json().catch(() => null)
-      if (failedJobsRes.ok) {
-        for (const job of extractBufferJobs(failedJobsBody)) {
-          const record = asRecord(job)
-          const jobId = toJobId(record?.id) || toJobId(record?.job_id)
-          const jobError = describeBufferJobError(job)
-          if (jobId && jobError) errorDetails.set(jobId, jobError)
-        }
-      }
-    } catch {}
-
     const jobs = Array.from(jobsById.values())
 
     let importRowsResult: {
