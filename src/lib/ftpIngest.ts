@@ -73,43 +73,59 @@ function buildInternalUploadHeaders() {
   return token ? { 'x-openclaw-internal-token': token } : undefined
 }
 
-function buildUploadUrl(uploadBaseUrl: string) {
-  const internalUploadBaseUrl = process.env.FTP_INGEST_UPLOAD_BASE_URL?.trim()
-  if (internalUploadBaseUrl) {
-    const url = new URL('/api/upload', internalUploadBaseUrl)
-    if (url.hostname === 'localhost') {
-      url.hostname = '127.0.0.1'
-    }
-    return url.toString()
-  }
-
-  const url = new URL('/api/upload', uploadBaseUrl)
+function normalizeUploadUrl(url: URL) {
   if (url.hostname === 'localhost') {
     url.hostname = '127.0.0.1'
-  } else if (url.hostname !== '127.0.0.1' && !process.env.VERCEL) {
-    url.protocol = 'http:'
-    url.hostname = '127.0.0.1'
-    url.port = process.env.PORT || process.env.NEXT_PORT || '3001'
   }
   return url.toString()
 }
 
+function buildUploadUrls(uploadBaseUrl: string) {
+  const internalUploadBaseUrl = process.env.FTP_INGEST_UPLOAD_BASE_URL?.trim()
+  if (internalUploadBaseUrl) {
+    return [normalizeUploadUrl(new URL('/api/upload', internalUploadBaseUrl))]
+  }
+
+  const url = new URL('/api/upload', uploadBaseUrl)
+  const candidates: string[] = []
+
+  if (url.hostname !== '127.0.0.1' && !process.env.VERCEL) {
+    const ports = [process.env.PORT, process.env.NEXT_PORT, '3000', '3001']
+      .map((port) => port?.trim())
+      .filter((port): port is string => Boolean(port))
+
+    for (const port of Array.from(new Set(ports))) {
+      const localUrl = new URL('/api/upload', uploadBaseUrl)
+      localUrl.protocol = 'http:'
+      localUrl.hostname = '127.0.0.1'
+      localUrl.port = port
+      candidates.push(localUrl.toString())
+    }
+  }
+
+  candidates.push(normalizeUploadUrl(url))
+
+  return Array.from(new Set(candidates))
+}
+
 async function postUploadForm(uploadBaseUrl: string, form: FormData) {
-  const uploadUrl = buildUploadUrl(uploadBaseUrl)
+  const uploadUrls = buildUploadUrls(uploadBaseUrl)
   const headers = buildInternalUploadHeaders()
   let lastError: unknown = null
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      return await fetch(uploadUrl, {
-        method: 'POST',
-        headers,
-        body: form,
-      })
-    } catch (error) {
-      lastError = error
-      if (attempt === 1) {
-        await new Promise((resolve) => setTimeout(resolve, 300))
+  for (const uploadUrl of uploadUrls) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        return await fetch(uploadUrl, {
+          method: 'POST',
+          headers,
+          body: form,
+        })
+      } catch (error) {
+        lastError = error
+        if (attempt === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 300))
+        }
       }
     }
   }
