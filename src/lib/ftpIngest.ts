@@ -73,6 +73,17 @@ function buildInternalUploadHeaders() {
   return token ? { 'x-openclaw-internal-token': token } : undefined
 }
 
+function describeUploadHttpError(status: number, body: JsonObject | null) {
+  const errorMessage = getErrorMessage(body?.error, `upload failed (${status})`)
+  if (status === 401) {
+    return `upload unauthorized: check FTP_INGEST_INTERNAL_TOKEN on the Snapflare server (${errorMessage})`
+  }
+  if (status === 413) {
+    return `upload rejected as too large by the HTTP proxy (${errorMessage}); set FTP_INGEST_UPLOAD_BASE_URL to a local loopback URL so FTP ingest bypasses the public proxy`
+  }
+  return errorMessage
+}
+
 function normalizeUploadUrl(url: URL) {
   if (url.hostname === 'localhost') {
     url.hostname = '127.0.0.1'
@@ -366,7 +377,7 @@ export async function runProjectFtpIngest(params: {
         const uploadBody = await uploadRes.json().catch(() => null)
 
         if (!uploadRes.ok || uploadBody?.success !== true) {
-          const errorMessage = getErrorMessage(uploadBody?.error, `upload failed (${uploadRes.status})`)
+          const errorMessage = describeUploadHttpError(uploadRes.status, asRecord(uploadBody))
           await cleanupPartialUpload({
             uploadBaseUrl: params.uploadBaseUrl,
             projectId: params.projectId,
