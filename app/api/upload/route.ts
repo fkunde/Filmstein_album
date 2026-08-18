@@ -211,18 +211,27 @@ async function buildClientPreviewAsset(params: {
     return { ok: false as const, skipped: true as const, reason: 'watermark disabled or logo missing' };
   }
 
-  const logoRes = await fetch(logoUrl);
-  if (!logoRes.ok) {
-    return { ok: false as const, skipped: false as const, reason: `watermark logo fetch failed (${logoRes.status})` };
-  }
+  let outputBuffer: Buffer;
+  try {
+    const logoRes = await fetch(logoUrl);
+    if (!logoRes.ok) {
+      return { ok: false as const, skipped: false as const, reason: `watermark logo fetch failed (${logoRes.status})` };
+    }
 
-  const logoBuffer = Buffer.from(await logoRes.arrayBuffer());
-  const outputBuffer = await buildWatermarkedClientPreview({
-    sourceBuffer: params.displayBuffer,
-    logoBuffer,
-    watermark,
-    mode: 'preview',
-  });
+    const logoBuffer = Buffer.from(await logoRes.arrayBuffer());
+    outputBuffer = await buildWatermarkedClientPreview({
+      sourceBuffer: params.displayBuffer,
+      logoBuffer,
+      watermark,
+      mode: 'preview',
+    });
+  } catch (error) {
+    return {
+      ok: false as const,
+      skipped: false as const,
+      reason: `watermark preview generation failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 
   const fileName = getClientPreviewFileName(params.versionedBaseName);
   const key = getClientPreviewKey({

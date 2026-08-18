@@ -74,7 +74,8 @@ function buildInternalUploadHeaders() {
 }
 
 function buildUploadUrl(uploadBaseUrl: string) {
-  const url = new URL('/api/upload', uploadBaseUrl)
+  const internalUploadBaseUrl = process.env.FTP_INGEST_UPLOAD_BASE_URL?.trim()
+  const url = new URL('/api/upload', internalUploadBaseUrl || uploadBaseUrl)
   if (url.hostname === 'localhost') {
     url.hostname = '127.0.0.1'
   }
