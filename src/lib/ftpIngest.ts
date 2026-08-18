@@ -291,7 +291,7 @@ export async function runProjectFtpIngest(params: {
     try {
       const existingImport = await params.supabaseAdmin
         .from('ftp_ingest_import_jobs')
-        .select('id, status, updated_at')
+        .select('id, status, updated_at, error_message')
         .eq('project_id', params.projectId)
         .eq('buffer_job_id', jobId)
         .maybeSingle()
@@ -299,11 +299,12 @@ export async function runProjectFtpIngest(params: {
       if (existingImport.data?.id && (existingImport.data?.status === 'imported' || existingImport.data?.status === 'confirm_failed')) {
         const confirm = await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/confirm`, {})
         if (!confirm.res.ok) {
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'confirm_failed', updated_at: new Date().toISOString() }).eq('id', existingImport.data.id)
+          const errorMessage = getErrorMessage(confirm.json?.error, `confirm failed (${confirm.res.status})`)
+          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'confirm_failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('id', existingImport.data.id)
           summary.confirmFailedCount++
-          summary.errors.push(`${jobId}: already imported but confirm failed`)
+          summary.errors.push(`${jobId}: already imported but confirm failed: ${errorMessage}`)
         } else {
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'imported', updated_at: new Date().toISOString() }).eq('id', existingImport.data.id)
+          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'imported', error_message: null, updated_at: new Date().toISOString() }).eq('id', existingImport.data.id)
           summary.importedSuccess++
         }
         continue
@@ -312,7 +313,8 @@ export async function runProjectFtpIngest(params: {
       if (existingImport.data?.id && existingImport.data?.status === 'failed') {
         const failedAt = existingImport.data.updated_at ? new Date(existingImport.data.updated_at).getTime() : 0
         if (failedAt && Date.now() - failedAt < 60_000) {
-          summary.errors.push(`${jobId}: failed recently, waiting before retry`)
+          const lastError = toStringValue(existingImport.data.error_message)
+          summary.errors.push(`${jobId}: failed recently, waiting before retry${lastError ? `; last error: ${lastError}` : ''}`)
           continue
         }
       }
@@ -320,7 +322,7 @@ export async function runProjectFtpIngest(params: {
       if (existingImport.data?.id) {
         await params.supabaseAdmin
           .from('ftp_ingest_import_jobs')
-          .update({ status: 'claimed', updated_at: new Date().toISOString() })
+          .update({ status: 'claimed', error_message: null, updated_at: new Date().toISOString() })
           .eq('id', existingImport.data.id)
       } else {
         await params.supabaseAdmin
@@ -333,10 +335,11 @@ export async function runProjectFtpIngest(params: {
 
       const fileRes = await fetch(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/file`)
       if (!fileRes.ok) {
-        await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: `download failed (${fileRes.status})` })
-        await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+        const errorMessage = `download failed (${fileRes.status})`
+        await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: errorMessage })
+        await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
         summary.failedCount++
-        summary.errors.push(`${jobId}: download failed`)
+        summary.errors.push(`${jobId}: ${errorMessage}`)
         continue
       }
 
@@ -363,6 +366,7 @@ export async function runProjectFtpIngest(params: {
         const uploadBody = await uploadRes.json().catch(() => null)
 
         if (!uploadRes.ok || uploadBody?.success !== true) {
+          const errorMessage = getErrorMessage(uploadBody?.error, `upload failed (${uploadRes.status})`)
           await cleanupPartialUpload({
             uploadBaseUrl: params.uploadBaseUrl,
             projectId: params.projectId,
@@ -370,32 +374,34 @@ export async function runProjectFtpIngest(params: {
             recentBeforeIso: beforeUploadIso,
             fileName,
           })
-          await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: getErrorMessage(uploadBody?.error, `upload failed (${uploadRes.status})`) })
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+          await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: errorMessage })
+          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
           summary.failedCount++
-          summary.errors.push(`${jobId}: ${uploadBody?.error || 'upload failed'}`)
+          summary.errors.push(`${jobId}: ${errorMessage}`)
           continue
         }
 
         const confirm = await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/confirm`, {})
         if (!confirm.res.ok) {
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'confirm_failed', updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+          const errorMessage = getErrorMessage(confirm.json?.error, `confirm failed (${confirm.res.status})`)
+          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'confirm_failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
           summary.confirmFailedCount++
-          summary.errors.push(`${jobId}: imported but confirm failed`)
+          summary.errors.push(`${jobId}: imported but confirm failed: ${errorMessage}`)
         } else {
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'imported', updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'imported', error_message: null, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
           summary.importedSuccess++
         }
       } finally {
         await fs.rm(tempPath, { force: true })
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error)
       try {
-        await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: error instanceof Error ? error.message : String(error) })
+        await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: errorMessage })
       } catch {}
-      await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+      await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
       summary.failedCount++
-      summary.errors.push(`${jobId}: ${error instanceof Error ? error.message : String(error)}`)
+      summary.errors.push(`${jobId}: ${errorMessage}`)
     }
   }
 

@@ -121,7 +121,7 @@ export async function GET(_req: Request, context: RouteContext) {
 
     const { data: importRows, error: importError } = await supabase
       .from('ftp_ingest_import_jobs')
-      .select('status, updated_at')
+      .select('buffer_job_id, status, updated_at, error_message')
       .eq('project_id', id)
 
     if (importError) return Response.json({ success: false, error: importError.message }, { status: 500 })
@@ -130,6 +130,15 @@ export async function GET(_req: Request, context: RouteContext) {
     const failedJobs = (importRows ?? []).filter((row) => row.status === 'failed' || row.status === 'confirm_failed').length
     const inProgressJobs = (importRows ?? []).filter((row) => row.status === 'claimed').length
     const lastSyncTime = (importRows ?? []).map((row) => row.updated_at).filter(Boolean).sort().slice(-1)[0] ?? null
+    for (const row of importRows ?? []) {
+      const jobId = toJobId(row.buffer_job_id)
+      const errorMessage = toStringValue(row.error_message)
+      if (jobId && errorMessage && (row.status === 'failed' || row.status === 'confirm_failed')) {
+        const bufferJob = asRecord(jobsById.get(jobId))
+        const fileName = toStringValue(bufferJob?.filename) || toStringValue(bufferJob?.file_name) || toStringValue(bufferJob?.relative_path)
+        errorDetails.set(jobId, `${jobId}${fileName ? ` ${fileName}` : ''}: ${errorMessage}`)
+      }
+    }
 
     return Response.json({
       success: true,
