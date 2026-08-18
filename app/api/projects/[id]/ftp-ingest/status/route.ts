@@ -30,6 +30,16 @@ function extractBufferJobs(jobsBody: unknown) {
   return []
 }
 
+function describeBufferJobError(job: unknown) {
+  const record = asRecord(job)
+  const errorMessage = toStringValue(record?.error_message) || toStringValue(record?.error)
+  if (!errorMessage) return null
+
+  const jobId = toJobId(record?.id) || toJobId(record?.job_id) || 'unknown job'
+  const fileName = toStringValue(record?.filename) || toStringValue(record?.file_name) || toStringValue(record?.relative_path)
+  return `${jobId}${fileName ? ` ${fileName}` : ''}: ${errorMessage}`
+}
+
 export async function GET(_req: Request, context: RouteContext) {
   const auth = await requireAdminApiAuth()
   if (auth instanceof Response) return auth
@@ -58,6 +68,7 @@ export async function GET(_req: Request, context: RouteContext) {
           lastSyncTime: ftpIngest.last_sync_at ?? null,
           requestUrl: null,
           error: 'FTP ingest not fully configured',
+          errorDetails: [],
         },
       })
     }
@@ -65,6 +76,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const baseUrl = ftpIngest.buffer_api_base_url.replace(/\/+$/, '')
     const requestUrl = `${baseUrl}/api/ingest/jobs?status=stable&project=${encodeURIComponent(ftpIngest.project_code)}`
     const jobsById = new Map<string, unknown>()
+    const errorDetails = new Map<string, string>()
     let statusError: string | null = null
     for (const status of ['stable', 'claimed']) {
       const statusUrl = `${baseUrl}/api/ingest/jobs?status=${encodeURIComponent(status)}&project=${encodeURIComponent(ftpIngest.project_code)}`
@@ -86,8 +98,25 @@ export async function GET(_req: Request, context: RouteContext) {
         const record = asRecord(job)
         const jobId = toJobId(record?.id) || toJobId(record?.job_id)
         if (jobId) jobsById.set(jobId, job)
+        const jobError = describeBufferJobError(job)
+        if (jobId && jobError) errorDetails.set(jobId, jobError)
       }
     }
+
+    const failedStatusUrl = `${baseUrl}/api/ingest/jobs?status=failed&project=${encodeURIComponent(ftpIngest.project_code)}`
+    try {
+      const failedJobsRes = await fetch(failedStatusUrl)
+      const failedJobsBody = await failedJobsRes.json().catch(() => null)
+      if (failedJobsRes.ok) {
+        for (const job of extractBufferJobs(failedJobsBody)) {
+          const record = asRecord(job)
+          const jobId = toJobId(record?.id) || toJobId(record?.job_id)
+          const jobError = describeBufferJobError(job)
+          if (jobId && jobError) errorDetails.set(jobId, jobError)
+        }
+      }
+    } catch {}
+
     const jobs = Array.from(jobsById.values())
 
     const { data: importRows, error: importError } = await supabase
@@ -112,6 +141,7 @@ export async function GET(_req: Request, context: RouteContext) {
         lastSyncTime: ftpIngest.last_sync_at ?? lastSyncTime,
         requestUrl,
         error: statusError,
+        errorDetails: Array.from(errorDetails.values()).slice(0, 10),
       },
     })
   } catch (error) {

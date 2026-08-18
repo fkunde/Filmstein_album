@@ -252,6 +252,7 @@ export default function ProjectEditDialog({
   const [ingestResult, setIngestResult] = useState<string | null>(null);
   const [ftpStatusSummary, setFtpStatusSummary] = useState<string | null>(null);
   const [ftpStatusError, setFtpStatusError] = useState<string | null>(null);
+  const [ftpErrorDetails, setFtpErrorDetails] = useState<string[]>([]);
   const [orphanScanSummary, setOrphanScanSummary] = useState<string | null>(null);
   const [orphanScanResult, setOrphanScanResult] = useState<null | {
     r2_orphans: { count: number; totalBytes: number; items: Array<{ path: string; size: number; sourceType: string; reason: string }> };
@@ -348,9 +349,10 @@ export default function ProjectEditDialog({
         setFtpStatusError(body?.error ?? `Status endpoint error (${res.status})`)
         return
       }
-      const data = body.data as { pendingJobs?: number; inProgressJobs?: number; importedJobs?: number; failedJobs?: number; lastSyncTime?: string | null; requestUrl?: string | null; error?: string | null }
+      const data = body.data as { pendingJobs?: number; inProgressJobs?: number; importedJobs?: number; failedJobs?: number; lastSyncTime?: string | null; requestUrl?: string | null; error?: string | null; errorDetails?: string[] }
       setFtpStatusSummary(`Pending ${data.pendingJobs ?? 0} · In progress ${data.inProgressJobs ?? 0} · Imported ${data.importedJobs ?? 0} · Failed ${data.failedJobs ?? 0}${data.lastSyncTime ? ` · Last sync ${data.lastSyncTime}` : ''}${data.requestUrl ? ` · URL ${data.requestUrl}` : ''}`)
       setFtpStatusError(data.error ?? null)
+      setFtpErrorDetails(Array.isArray(data.errorDetails) ? data.errorDetails : [])
     } catch (error) {
       setFtpStatusError(`Status fetch failed: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -583,6 +585,7 @@ export default function ProjectEditDialog({
     setIngesting(true);
     setError(null);
     setIngestResult(null);
+    setFtpErrorDetails([]);
     try {
       const res = await fetch(`/api/projects/${project.id}/ftp-ingest`, { method: 'POST' });
       const body = await res.json().catch(() => null);
@@ -590,8 +593,9 @@ export default function ProjectEditDialog({
         setError(body?.error ?? 'FTP ingest failed');
         return;
       }
-      const data = body.data as { foundJobs?: number; importedSuccess?: number; failedCount?: number; confirmFailedCount?: number };
+      const data = body.data as { foundJobs?: number; importedSuccess?: number; failedCount?: number; confirmFailedCount?: number; errors?: string[] };
       setIngestResult(`Found ${data.foundJobs ?? 0} jobs · Imported ${data.importedSuccess ?? 0} · Failed ${data.failedCount ?? 0}${(data.confirmFailedCount ?? 0) > 0 ? ` · Confirm failed ${data.confirmFailedCount}` : ''}`);
+      setFtpErrorDetails(Array.isArray(data.errors) ? data.errors : []);
     } catch {
       setError('FTP ingest failed. Please try again.');
     } finally {
@@ -1317,6 +1321,16 @@ export default function ProjectEditDialog({
                   {ftpStatusSummary && <p>{ftpStatusSummary}</p>}
                   {ftpStatusError && <p className="text-destructive">{ftpStatusError}</p>}
                   {ingestResult && <p>{ingestResult}</p>}
+                  {ftpErrorDetails.length > 0 && (
+                    <div className="space-y-1 text-destructive">
+                      <p className="font-medium">Error details</p>
+                      <ul className="space-y-1">
+                        {ftpErrorDetails.map((detail, index) => (
+                          <li key={`${detail}-${index}`} className="break-words">{detail}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Button type="button" variant="outline" size="sm" onClick={handleLoadFtpStatus}>Refresh status</Button>
                     <Button type="button" variant="outline" size="sm" onClick={handleRunFtpIngest} disabled={ingesting}>
