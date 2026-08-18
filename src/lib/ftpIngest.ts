@@ -75,9 +75,21 @@ function buildInternalUploadHeaders() {
 
 function buildUploadUrl(uploadBaseUrl: string) {
   const internalUploadBaseUrl = process.env.FTP_INGEST_UPLOAD_BASE_URL?.trim()
-  const url = new URL('/api/upload', internalUploadBaseUrl || uploadBaseUrl)
+  if (internalUploadBaseUrl) {
+    const url = new URL('/api/upload', internalUploadBaseUrl)
+    if (url.hostname === 'localhost') {
+      url.hostname = '127.0.0.1'
+    }
+    return url.toString()
+  }
+
+  const url = new URL('/api/upload', uploadBaseUrl)
   if (url.hostname === 'localhost') {
     url.hostname = '127.0.0.1'
+  } else if (url.hostname !== '127.0.0.1' && !process.env.VERCEL) {
+    url.protocol = 'http:'
+    url.hostname = '127.0.0.1'
+    url.port = process.env.PORT || process.env.NEXT_PORT || '3001'
   }
   return url.toString()
 }
