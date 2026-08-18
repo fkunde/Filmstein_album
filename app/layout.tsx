@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-const SNAPFLARE_VERSION = "v1.0.5 beta";
+const SNAPFLARE_VERSION = "v1.0.5";
 const DEPLOY_COMMIT_SHA =
   process.env.VERCEL_GIT_COMMIT_SHA ||
   process.env.CF_PAGES_COMMIT_SHA ||
