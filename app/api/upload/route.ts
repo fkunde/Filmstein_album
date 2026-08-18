@@ -33,6 +33,11 @@ function appendVersionSuffix(fileName: string, versionNo: number) {
   return `${sanitizeFileName(base)}_v${versionNo}${ext}`;
 }
 
+function hasValidInternalUploadToken(req: Request) {
+  const expected = process.env.FTP_INGEST_INTERNAL_TOKEN
+  return Boolean(expected && req.headers.get('x-openclaw-internal-token') === expected)
+}
+
 function detectUploadKind(file: File): 'raw' | 'image' {
   const lower = file.name.toLowerCase();
   if (/\.(cr2|cr3|nef|arw|dng|raf|rw2|orf|pef|srw)$/.test(lower)) return 'raw';
@@ -295,8 +300,10 @@ async function deleteStoredAsset(file: { storage_provider?: string | null; bucke
 }
 
 export async function POST(req: Request) {
-  const auth = await requireAdminApiAuth()
-  if (auth instanceof Response) return auth
+  if (!hasValidInternalUploadToken(req)) {
+    const auth = await requireAdminApiAuth()
+    if (auth instanceof Response) return auth
+  }
 
   try {
     const url = new URL(req.url);

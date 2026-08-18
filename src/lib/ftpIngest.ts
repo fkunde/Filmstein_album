@@ -51,6 +51,42 @@ async function postJson(url: string, body: unknown) {
   return { res, json, text }
 }
 
+function buildInternalUploadHeaders() {
+  const token = process.env.FTP_INGEST_INTERNAL_TOKEN
+  return token ? { 'x-openclaw-internal-token': token } : undefined
+}
+
+function buildUploadUrl(uploadBaseUrl: string) {
+  const url = new URL('/api/upload', uploadBaseUrl)
+  if (url.hostname === 'localhost') {
+    url.hostname = '127.0.0.1'
+  }
+  return url.toString()
+}
+
+async function postUploadForm(uploadBaseUrl: string, form: FormData) {
+  const uploadUrl = buildUploadUrl(uploadBaseUrl)
+  const headers = buildInternalUploadHeaders()
+  let lastError: unknown = null
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      return await fetch(uploadUrl, {
+        method: 'POST',
+        headers,
+        body: form,
+      })
+    } catch (error) {
+      lastError = error
+      if (attempt === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+      }
+    }
+  }
+
+  throw lastError
+}
+
 async function validateDownloadedImage(params: { tempPath: string; fileName: string; buffer: Buffer }) {
   const stat = await fs.stat(params.tempPath)
   if (!stat.isFile() || stat.size <= 0) {
@@ -227,10 +263,7 @@ export async function runProjectFtpIngest(params: {
         form.append('projectId', params.projectId)
         form.append('file', new File([fileBuffer], fileName, { type: String(job.content_type ?? 'application/octet-stream') }))
 
-        const uploadRes = await fetch(`${params.uploadBaseUrl}/api/upload`, {
-          method: 'POST',
-          body: form,
-        })
+        const uploadRes = await postUploadForm(params.uploadBaseUrl, form)
         const uploadBody = await uploadRes.json().catch(() => null)
 
         if (!uploadRes.ok || uploadBody?.success !== true) {

@@ -246,7 +246,7 @@ export default function ProjectEditDialog({
   const [sharePasswordValue, setSharePasswordValue] = useState('');
   const [assetUploading, setAssetUploading] = useState<string | null>(null);
   const [ftpBufferApiBaseUrl, setFtpBufferApiBaseUrl] = useState((project as Project & { ftp_ingest?: { buffer_api_base_url?: string } }).ftp_ingest?.buffer_api_base_url || "");
-  const [ftpProjectCode, setFtpProjectCode] = useState((project as Project & { ftp_ingest?: { project_code?: string } }).ftp_ingest?.project_code || "");
+  const ftpProjectCode = project.id;
   const [ftpAutoSyncIntervalSeconds, setFtpAutoSyncIntervalSeconds] = useState(String((project as Project & { ftp_ingest?: { auto_sync_interval_seconds?: number } }).ftp_ingest?.auto_sync_interval_seconds ?? 15));
   const [ingesting, setIngesting] = useState(false);
   const [ingestResult, setIngestResult] = useState<string | null>(null);
@@ -1296,7 +1296,7 @@ export default function ProjectEditDialog({
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-foreground">Project Code</label>
-                  <input type="text" value={ftpProjectCode} onChange={(e) => setFtpProjectCode(e.target.value)} placeholder="project-test" className="flex h-9 w-full rounded-md border border-border bg-background px-3 py-1 text-sm text-foreground" />
+                  <code className="flex min-h-9 w-full items-center break-all rounded-md border border-border bg-background px-3 py-1 text-sm text-foreground">{ftpProjectCode}</code>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-foreground">Auto Sync Interval (seconds)</label>
