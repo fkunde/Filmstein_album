@@ -100,6 +100,12 @@ function buildUploadUrls(uploadBaseUrl: string) {
       localUrl.hostname = '127.0.0.1'
       localUrl.port = port
       candidates.push(localUrl.toString())
+
+      const localhostUrl = new URL('/api/upload', uploadBaseUrl)
+      localhostUrl.protocol = 'http:'
+      localhostUrl.hostname = 'localhost'
+      localhostUrl.port = port
+      candidates.push(localhostUrl.toString())
     }
   }
 
@@ -108,21 +114,51 @@ function buildUploadUrls(uploadBaseUrl: string) {
   return Array.from(new Set(candidates))
 }
 
-async function postUploadForm(uploadBaseUrl: string, form: FormData) {
+function describeFetchError(error: unknown) {
+  if (!(error instanceof Error)) return String(error)
+
+  const cause = error.cause
+  if (cause instanceof Error && cause.message) {
+    return `${error.message}: ${cause.message}`
+  }
+
+  return error.message
+}
+
+function buildUploadForm(params: { projectId: string; fileBuffer: Buffer; fileName: string; contentType: string }) {
+  const form = new FormData()
+  const fileBytes = new Uint8Array(params.fileBuffer.byteLength)
+  fileBytes.set(params.fileBuffer)
+  form.append('projectId', params.projectId)
+  form.append('file', new File([fileBytes], params.fileName, { type: params.contentType }))
+  return form
+}
+
+async function postUploadForm(uploadBaseUrl: string, upload: { projectId: string; fileBuffer: Buffer; fileName: string; contentType: string }) {
   const uploadUrls = buildUploadUrls(uploadBaseUrl)
   const headers = buildInternalUploadHeaders()
   let lastError: unknown = null
+  const attempts: string[] = []
 
   for (const uploadUrl of uploadUrls) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        return await fetch(uploadUrl, {
+        const res = await fetch(uploadUrl, {
           method: 'POST',
           headers,
-          body: form,
+          body: buildUploadForm(upload),
         })
+
+        if (res.ok || ![404, 405, 502, 503, 504].includes(res.status)) {
+          return res
+        }
+
+        const text = await res.clone().text().catch(() => '')
+        attempts.push(`${uploadUrl} -> HTTP ${res.status}${text ? ` ${text.slice(0, 120)}` : ''}`)
+        lastError = new Error(`HTTP ${res.status}`)
       } catch (error) {
         lastError = error
+        attempts.push(`${uploadUrl} -> ${describeFetchError(error)}`)
         if (attempt === 1) {
           await new Promise((resolve) => setTimeout(resolve, 300))
         }
@@ -130,7 +166,7 @@ async function postUploadForm(uploadBaseUrl: string, form: FormData) {
     }
   }
 
-  throw lastError
+  throw new Error(`upload fetch failed after ${attempts.length} attempts: ${attempts.join(' | ') || describeFetchError(lastError)}`)
 }
 
 async function validateDownloadedImage(params: { tempPath: string; fileName: string; buffer: Buffer }) {
@@ -318,11 +354,12 @@ export async function runProjectFtpIngest(params: {
         await validateDownloadedImage({ tempPath, fileName, buffer: fileBuffer })
 
         const beforeUploadIso = new Date().toISOString()
-        const form = new FormData()
-        form.append('projectId', params.projectId)
-        form.append('file', new File([fileBuffer], fileName, { type: toStringValue(jobRecord?.content_type) || 'application/octet-stream' }))
-
-        const uploadRes = await postUploadForm(params.uploadBaseUrl, form)
+        const uploadRes = await postUploadForm(params.uploadBaseUrl, {
+          projectId: params.projectId,
+          fileBuffer,
+          fileName,
+          contentType: toStringValue(jobRecord?.content_type) || 'application/octet-stream',
+        })
         const uploadBody = await uploadRes.json().catch(() => null)
 
         if (!uploadRes.ok || uploadBody?.success !== true) {
