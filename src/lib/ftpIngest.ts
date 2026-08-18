@@ -32,8 +32,25 @@ function toStringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+function toJobId(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
+}
+
 function getErrorMessage(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value : fallback
+}
+
+function extractBufferJobs(jobsBody: unknown) {
+  const body = asRecord(jobsBody)
+  const data = asRecord(body?.data)
+  if (Array.isArray(body?.items)) return body.items
+  if (Array.isArray(data?.items)) return data.items
+  if (Array.isArray(body?.jobs)) return body.jobs
+  if (Array.isArray(data?.jobs)) return data.jobs
+  if (Array.isArray(body?.data)) return body.data
+  return []
 }
 
 async function postJson(url: string, body: unknown) {
@@ -168,21 +185,25 @@ export async function runProjectFtpIngest(params: {
   const baseUrl = config.buffer_api_base_url.replace(/\/+$/, '')
   const projectCode = config.project_code.trim()
   const requestUrl = `${baseUrl}/api/ingest/jobs?status=stable&project=${encodeURIComponent(projectCode)}`
-  const jobsRes = await fetch(requestUrl)
-  const jobsBody = await jobsRes.json().catch(() => null)
-  if (!jobsRes.ok) throw new Error(jobsBody?.error || `Failed to list buffer jobs (${jobsRes.status})`)
+  const requestedStatuses = ['stable', 'claimed']
+  const jobsById = new Map<string, unknown>()
+  const rawJobsResponse: Record<string, unknown> = {}
 
-  const jobs = Array.isArray(jobsBody?.items)
-    ? jobsBody.items
-    : Array.isArray(jobsBody?.data?.items)
-      ? jobsBody.data.items
-      : Array.isArray(jobsBody?.jobs)
-        ? jobsBody.jobs
-        : Array.isArray(jobsBody?.data?.jobs)
-          ? jobsBody.data.jobs
-          : Array.isArray(jobsBody?.data)
-            ? jobsBody.data
-            : []
+  for (const status of requestedStatuses) {
+    const statusUrl = `${baseUrl}/api/ingest/jobs?status=${encodeURIComponent(status)}&project=${encodeURIComponent(projectCode)}`
+    const jobsRes = await fetch(statusUrl)
+    const jobsBody = await jobsRes.json().catch(() => null)
+    rawJobsResponse[status] = jobsBody
+    if (!jobsRes.ok) throw new Error(getErrorMessage(asRecord(jobsBody)?.error, `Failed to list buffer jobs (${jobsRes.status})`))
+
+    for (const job of extractBufferJobs(jobsBody)) {
+      const record = asRecord(job)
+      const jobId = toJobId(record?.id) || toJobId(record?.job_id)
+      if (jobId) jobsById.set(jobId, job)
+    }
+  }
+
+  const jobs = Array.from(jobsById.values())
   const summary: FtpIngestSummary = {
     foundJobs: jobs.length,
     importedSuccess: 0,
@@ -190,11 +211,12 @@ export async function runProjectFtpIngest(params: {
     confirmFailedCount: 0,
     errors: [],
     requestUrl,
-    rawJobsResponse: jobsBody,
+    rawJobsResponse,
   }
 
   for (const job of jobs) {
-    const jobId = String(job.id ?? job.job_id ?? '')
+    const jobRecord = asRecord(job)
+    const jobId = toJobId(jobRecord?.id) || toJobId(jobRecord?.job_id)
     if (!jobId) {
       summary.failedCount++
       summary.errors.push('Encountered buffer job without id')
@@ -209,8 +231,16 @@ export async function runProjectFtpIngest(params: {
         .eq('buffer_job_id', jobId)
         .maybeSingle()
 
-      if (existingImport.data?.id && existingImport.data?.status === 'imported') {
-        summary.errors.push(`${jobId}: already imported`)
+      if (existingImport.data?.id && (existingImport.data?.status === 'imported' || existingImport.data?.status === 'confirm_failed')) {
+        const confirm = await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/confirm`, {})
+        if (!confirm.res.ok) {
+          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'confirm_failed', updated_at: new Date().toISOString() }).eq('id', existingImport.data.id)
+          summary.confirmFailedCount++
+          summary.errors.push(`${jobId}: already imported but confirm failed`)
+        } else {
+          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'imported', updated_at: new Date().toISOString() }).eq('id', existingImport.data.id)
+          summary.importedSuccess++
+        }
         continue
       }
 
@@ -247,7 +277,7 @@ export async function runProjectFtpIngest(params: {
 
       const arrayBuffer = await fileRes.arrayBuffer()
       const fileBuffer = Buffer.from(arrayBuffer)
-      const fileName = String(job.file_name ?? job.filename ?? '')
+      const fileName = toStringValue(jobRecord?.file_name) || toStringValue(jobRecord?.filename)
       if (!fileName.trim()) {
         throw new Error('invalid image file: missing file name')
       }
@@ -261,7 +291,7 @@ export async function runProjectFtpIngest(params: {
         const beforeUploadIso = new Date().toISOString()
         const form = new FormData()
         form.append('projectId', params.projectId)
-        form.append('file', new File([fileBuffer], fileName, { type: String(job.content_type ?? 'application/octet-stream') }))
+        form.append('file', new File([fileBuffer], fileName, { type: toStringValue(jobRecord?.content_type) || 'application/octet-stream' }))
 
         const uploadRes = await postUploadForm(params.uploadBaseUrl, form)
         const uploadBody = await uploadRes.json().catch(() => null)

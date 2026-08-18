@@ -3,6 +3,33 @@ import { requireAdminApiAuth } from '@/lib/auth/session'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function toJobId(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
+}
+
+function toStringValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function extractBufferJobs(jobsBody: unknown) {
+  const body = asRecord(jobsBody)
+  const data = asRecord(body?.data)
+  if (Array.isArray(body?.items)) return body.items
+  if (Array.isArray(data?.items)) return data.items
+  if (Array.isArray(body?.jobs)) return body.jobs
+  if (Array.isArray(data?.jobs)) return data.jobs
+  if (Array.isArray(body?.data)) return body.data
+  return []
+}
+
 export async function GET(_req: Request, context: RouteContext) {
   const auth = await requireAdminApiAuth()
   if (auth instanceof Response) return auth
@@ -35,36 +62,33 @@ export async function GET(_req: Request, context: RouteContext) {
       })
     }
 
-    const requestUrl = `${ftpIngest.buffer_api_base_url.replace(/\/+$/, '')}/api/ingest/jobs?status=stable&project=${encodeURIComponent(ftpIngest.project_code)}`
-    let jobsRes: Response
-    try {
-      jobsRes = await fetch(requestUrl)
-    } catch (error) {
-      return Response.json({
-        success: true,
-        data: {
-          pendingJobs: 0,
-          inProgressJobs: 0,
-          importedJobs: 0,
-          failedJobs: 0,
-          lastSyncTime: ftpIngest.last_sync_at ?? null,
-          requestUrl,
-          error: `Failed to reach buffer API: ${error instanceof Error ? error.message : String(error)}`,
-        },
-      })
+    const baseUrl = ftpIngest.buffer_api_base_url.replace(/\/+$/, '')
+    const requestUrl = `${baseUrl}/api/ingest/jobs?status=stable&project=${encodeURIComponent(ftpIngest.project_code)}`
+    const jobsById = new Map<string, unknown>()
+    let statusError: string | null = null
+    for (const status of ['stable', 'claimed']) {
+      const statusUrl = `${baseUrl}/api/ingest/jobs?status=${encodeURIComponent(status)}&project=${encodeURIComponent(ftpIngest.project_code)}`
+      let jobsRes: Response
+      try {
+        jobsRes = await fetch(statusUrl)
+      } catch (error) {
+        statusError = `Failed to reach buffer API: ${error instanceof Error ? error.message : String(error)}`
+        continue
+      }
+
+      const jobsBody = await jobsRes.json().catch(() => null)
+      if (!jobsRes.ok) {
+        statusError = toStringValue(asRecord(jobsBody)?.error) || `Status endpoint error: failed to load ${status} jobs (${jobsRes.status})`
+        continue
+      }
+
+      for (const job of extractBufferJobs(jobsBody)) {
+        const record = asRecord(job)
+        const jobId = toJobId(record?.id) || toJobId(record?.job_id)
+        if (jobId) jobsById.set(jobId, job)
+      }
     }
-    const jobsBody = await jobsRes.json().catch(() => null)
-    const jobs = Array.isArray(jobsBody?.items)
-      ? jobsBody.items
-      : Array.isArray(jobsBody?.data?.items)
-        ? jobsBody.data.items
-        : Array.isArray(jobsBody?.jobs)
-          ? jobsBody.jobs
-          : Array.isArray(jobsBody?.data?.jobs)
-            ? jobsBody.data.jobs
-            : Array.isArray(jobsBody?.data)
-              ? jobsBody.data
-              : []
+    const jobs = Array.from(jobsById.values())
 
     const { data: importRows, error: importError } = await supabase
       .from('ftp_ingest_import_jobs')
@@ -87,9 +111,7 @@ export async function GET(_req: Request, context: RouteContext) {
         failedJobs,
         lastSyncTime: ftpIngest.last_sync_at ?? lastSyncTime,
         requestUrl,
-        error: jobsRes.ok
-          ? (Array.isArray(jobs) ? null : 'Invalid buffer API response')
-          : jobsBody?.error || `Status endpoint error: failed to load pending jobs (${jobsRes.status})`,
+        error: statusError,
       },
     })
   } catch (error) {
