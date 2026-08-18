@@ -19,6 +19,15 @@ function toStringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+function isMissingImportErrorMessageColumn(error: unknown) {
+  const record = asRecord(error)
+  const code = toStringValue(record?.code)
+  const message = toStringValue(record?.message)
+  return code === '42703'
+    || code === 'PGRST204'
+    || (message.includes('error_message') && message.includes('does not exist'))
+}
+
 function extractBufferJobs(jobsBody: unknown) {
   const body = asRecord(jobsBody)
   const data = asRecord(body?.data)
@@ -119,18 +128,30 @@ export async function GET(_req: Request, context: RouteContext) {
 
     const jobs = Array.from(jobsById.values())
 
-    const { data: importRows, error: importError } = await supabase
+    let importRowsResult: {
+      data: Array<Record<string, unknown>> | null
+      error: { code?: string; message?: string } | null
+    } = await supabase
       .from('ftp_ingest_import_jobs')
       .select('buffer_job_id, status, updated_at, error_message')
       .eq('project_id', id)
 
-    if (importError) return Response.json({ success: false, error: importError.message }, { status: 500 })
+    if (importRowsResult.error && isMissingImportErrorMessageColumn(importRowsResult.error)) {
+      importRowsResult = await supabase
+        .from('ftp_ingest_import_jobs')
+        .select('buffer_job_id, status, updated_at')
+        .eq('project_id', id)
+    }
 
-    const importedJobs = (importRows ?? []).filter((row) => row.status === 'imported').length
-    const failedJobs = (importRows ?? []).filter((row) => row.status === 'failed' || row.status === 'confirm_failed').length
-    const inProgressJobs = (importRows ?? []).filter((row) => row.status === 'claimed').length
-    const lastSyncTime = (importRows ?? []).map((row) => row.updated_at).filter(Boolean).sort().slice(-1)[0] ?? null
-    for (const row of importRows ?? []) {
+    if (importRowsResult.error) return Response.json({ success: false, error: importRowsResult.error.message }, { status: 500 })
+
+    const importRows = importRowsResult.data ?? []
+
+    const importedJobs = importRows.filter((row) => row.status === 'imported').length
+    const failedJobs = importRows.filter((row) => row.status === 'failed' || row.status === 'confirm_failed').length
+    const inProgressJobs = importRows.filter((row) => row.status === 'claimed').length
+    const lastSyncTime = importRows.map((row) => row.updated_at).filter(Boolean).sort().slice(-1)[0] ?? null
+    for (const row of importRows) {
       const jobId = toJobId(row.buffer_job_id)
       const errorMessage = toStringValue(row.error_message)
       if (jobId && errorMessage && (row.status === 'failed' || row.status === 'confirm_failed')) {

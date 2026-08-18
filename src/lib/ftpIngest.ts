@@ -42,6 +42,88 @@ function getErrorMessage(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value : fallback
 }
 
+function withoutErrorMessage<T extends JsonObject>(values: T) {
+  const next = { ...values }
+  delete next.error_message
+  return next
+}
+
+function isMissingImportErrorMessageColumn(error: unknown) {
+  const record = asRecord(error)
+  const code = toStringValue(record?.code)
+  const message = toStringValue(record?.message)
+  return code === '42703'
+    || code === 'PGRST204'
+    || (message.includes('error_message') && message.includes('does not exist'))
+}
+
+async function selectExistingImportJob(params: {
+  supabaseAdmin: SupabaseServerClient
+  projectId: string
+  jobId: string
+}) {
+  const withErrorMessage = await params.supabaseAdmin
+    .from('ftp_ingest_import_jobs')
+    .select('id, status, updated_at, error_message')
+    .eq('project_id', params.projectId)
+    .eq('buffer_job_id', params.jobId)
+    .maybeSingle()
+
+  if (!withErrorMessage.error || !isMissingImportErrorMessageColumn(withErrorMessage.error)) {
+    return withErrorMessage
+  }
+
+  return params.supabaseAdmin
+    .from('ftp_ingest_import_jobs')
+    .select('id, status, updated_at')
+    .eq('project_id', params.projectId)
+    .eq('buffer_job_id', params.jobId)
+    .maybeSingle()
+}
+
+async function updateImportJobById(params: {
+  supabaseAdmin: SupabaseServerClient
+  id: string
+  values: JsonObject
+}) {
+  const result = await params.supabaseAdmin
+    .from('ftp_ingest_import_jobs')
+    .update(params.values)
+    .eq('id', params.id)
+
+  if (!result.error || !isMissingImportErrorMessageColumn(result.error) || !('error_message' in params.values)) {
+    return result
+  }
+
+  return params.supabaseAdmin
+    .from('ftp_ingest_import_jobs')
+    .update(withoutErrorMessage(params.values))
+    .eq('id', params.id)
+}
+
+async function updateImportJobByBufferJob(params: {
+  supabaseAdmin: SupabaseServerClient
+  projectId: string
+  jobId: string
+  values: JsonObject
+}) {
+  const result = await params.supabaseAdmin
+    .from('ftp_ingest_import_jobs')
+    .update(params.values)
+    .eq('project_id', params.projectId)
+    .eq('buffer_job_id', params.jobId)
+
+  if (!result.error || !isMissingImportErrorMessageColumn(result.error) || !('error_message' in params.values)) {
+    return result
+  }
+
+  return params.supabaseAdmin
+    .from('ftp_ingest_import_jobs')
+    .update(withoutErrorMessage(params.values))
+    .eq('project_id', params.projectId)
+    .eq('buffer_job_id', params.jobId)
+}
+
 function extractBufferJobs(jobsBody: unknown) {
   const body = asRecord(jobsBody)
   const data = asRecord(body?.data)
@@ -300,22 +382,21 @@ export async function runProjectFtpIngest(params: {
     }
 
     try {
-      const existingImport = await params.supabaseAdmin
-        .from('ftp_ingest_import_jobs')
-        .select('id, status, updated_at, error_message')
-        .eq('project_id', params.projectId)
-        .eq('buffer_job_id', jobId)
-        .maybeSingle()
+      const existingImport = await selectExistingImportJob({
+        supabaseAdmin: params.supabaseAdmin,
+        projectId: params.projectId,
+        jobId,
+      })
 
       if (existingImport.data?.id && (existingImport.data?.status === 'imported' || existingImport.data?.status === 'confirm_failed')) {
         const confirm = await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/confirm`, {})
         if (!confirm.res.ok) {
           const errorMessage = getErrorMessage(confirm.json?.error, `confirm failed (${confirm.res.status})`)
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'confirm_failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('id', existingImport.data.id)
+          await updateImportJobById({ supabaseAdmin: params.supabaseAdmin, id: existingImport.data.id, values: { status: 'confirm_failed', error_message: errorMessage, updated_at: new Date().toISOString() } })
           summary.confirmFailedCount++
           summary.errors.push(`${jobId}: already imported but confirm failed: ${errorMessage}`)
         } else {
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'imported', error_message: null, updated_at: new Date().toISOString() }).eq('id', existingImport.data.id)
+          await updateImportJobById({ supabaseAdmin: params.supabaseAdmin, id: existingImport.data.id, values: { status: 'imported', error_message: null, updated_at: new Date().toISOString() } })
           summary.importedSuccess++
         }
         continue
@@ -324,17 +405,14 @@ export async function runProjectFtpIngest(params: {
       if (existingImport.data?.id && existingImport.data?.status === 'failed') {
         const failedAt = existingImport.data.updated_at ? new Date(existingImport.data.updated_at).getTime() : 0
         if (failedAt && Date.now() - failedAt < 60_000) {
-          const lastError = toStringValue(existingImport.data.error_message)
+          const lastError = toStringValue(asRecord(existingImport.data)?.error_message)
           summary.errors.push(`${jobId}: failed recently, waiting before retry${lastError ? `; last error: ${lastError}` : ''}`)
           continue
         }
       }
 
       if (existingImport.data?.id) {
-        await params.supabaseAdmin
-          .from('ftp_ingest_import_jobs')
-          .update({ status: 'claimed', error_message: null, updated_at: new Date().toISOString() })
-          .eq('id', existingImport.data.id)
+        await updateImportJobById({ supabaseAdmin: params.supabaseAdmin, id: existingImport.data.id, values: { status: 'claimed', error_message: null, updated_at: new Date().toISOString() } })
       } else {
         await params.supabaseAdmin
           .from('ftp_ingest_import_jobs')
@@ -348,7 +426,7 @@ export async function runProjectFtpIngest(params: {
       if (!fileRes.ok) {
         const errorMessage = `download failed (${fileRes.status})`
         await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: errorMessage })
-        await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+        await updateImportJobByBufferJob({ supabaseAdmin: params.supabaseAdmin, projectId: params.projectId, jobId, values: { status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() } })
         summary.failedCount++
         summary.errors.push(`${jobId}: ${errorMessage}`)
         continue
@@ -386,7 +464,7 @@ export async function runProjectFtpIngest(params: {
             fileName,
           })
           await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: errorMessage })
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+          await updateImportJobByBufferJob({ supabaseAdmin: params.supabaseAdmin, projectId: params.projectId, jobId, values: { status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() } })
           summary.failedCount++
           summary.errors.push(`${jobId}: ${errorMessage}`)
           continue
@@ -395,11 +473,11 @@ export async function runProjectFtpIngest(params: {
         const confirm = await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/confirm`, {})
         if (!confirm.res.ok) {
           const errorMessage = getErrorMessage(confirm.json?.error, `confirm failed (${confirm.res.status})`)
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'confirm_failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+          await updateImportJobByBufferJob({ supabaseAdmin: params.supabaseAdmin, projectId: params.projectId, jobId, values: { status: 'confirm_failed', error_message: errorMessage, updated_at: new Date().toISOString() } })
           summary.confirmFailedCount++
           summary.errors.push(`${jobId}: imported but confirm failed: ${errorMessage}`)
         } else {
-          await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'imported', error_message: null, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+          await updateImportJobByBufferJob({ supabaseAdmin: params.supabaseAdmin, projectId: params.projectId, jobId, values: { status: 'imported', error_message: null, updated_at: new Date().toISOString() } })
           summary.importedSuccess++
         }
       } finally {
@@ -410,7 +488,7 @@ export async function runProjectFtpIngest(params: {
       try {
         await postJson(`${baseUrl}/api/ingest/jobs/${encodeURIComponent(jobId)}/fail`, { error: errorMessage })
       } catch {}
-      await params.supabaseAdmin.from('ftp_ingest_import_jobs').update({ status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() }).eq('project_id', params.projectId).eq('buffer_job_id', jobId)
+      await updateImportJobByBufferJob({ supabaseAdmin: params.supabaseAdmin, projectId: params.projectId, jobId, values: { status: 'failed', error_message: errorMessage, updated_at: new Date().toISOString() } })
       summary.failedCount++
       summary.errors.push(`${jobId}: ${errorMessage}`)
     }
