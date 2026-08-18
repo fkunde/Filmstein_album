@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { supabase } from '@/lib/supabase/server'
 import { mapRowToProject } from '@/lib/mapProject'
 import { requireAdminApiAuth } from '@/lib/auth/session'
@@ -149,11 +151,19 @@ export async function POST(req: Request) {
       return Response.json({ success: false, error: 'Project name is required' }, { status: 400 })
     }
 
+    const projectId = randomUUID()
     const insertPayload: Record<string, unknown> = {
+      id: projectId,
       name,
       client_name: clientName,
       type,
       created_by_admin_user_id: auth.id,
+      ftp_ingest: {
+        enabled: false,
+        buffer_api_base_url: '',
+        project_code: projectId,
+        auto_sync_interval_seconds: 15,
+      },
     }
 
     const { data, error } = await supabase

@@ -282,7 +282,7 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     const { data: existingProjectRow, error: existingProjectError } = await supabase
       .from('projects')
-      .select('visual_settings')
+      .select('ftp_ingest, visual_settings')
       .eq('id', id)
       .maybeSingle()
 
@@ -297,7 +297,16 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (typeof body.status === 'string') updates.status = body.status
     if (typeof body.description === 'string') updates.description = body.description.trim()
     if (typeof body.cover_url === 'string') updates.cover_url = body.cover_url.trim()
-    if (body.ftp_ingest && typeof body.ftp_ingest === 'object') updates.ftp_ingest = body.ftp_ingest
+    if (body.ftp_ingest && typeof body.ftp_ingest === 'object') {
+      const existingFtpIngest = (existingProjectRow?.ftp_ingest && typeof existingProjectRow.ftp_ingest === 'object')
+        ? existingProjectRow.ftp_ingest as Record<string, unknown>
+        : {}
+      updates.ftp_ingest = {
+        ...existingFtpIngest,
+        ...(body.ftp_ingest as Record<string, unknown>),
+        project_code: id,
+      }
+    }
     if (body.project_assets && typeof body.project_assets === 'object') updates.project_assets = body.project_assets
     if (body.visual_settings && typeof body.visual_settings === 'object') {
       const incomingVisualSettings = body.visual_settings as Record<string, unknown>
