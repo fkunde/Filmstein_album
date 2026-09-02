@@ -25,18 +25,6 @@ interface PhotoPreviewModalProps {
   onRemoveClientMark?: (photo: Photo, viewerSessionId: string) => Promise<void> | void;
 }
 
-type PreviewPhoto = Photo & {
-  clientMarkDetails?: PhotoClientMarkDetail[];
-  displayUrl?: string;
-  clientPreviewUrl?: string;
-  originalUrl?: string;
-  retouchedOriginalUrl?: string;
-  displayFileId?: string;
-  clientPreviewFileId?: string;
-  versionCount?: number;
-  latestVersionNo?: number;
-};
-
 const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initialIndex, open, onClose, onDeleteCurrent, onDeleteAllVersions, onTogglePublish, onMarkPrinted, clientDownloadMode = false, project = null, onToggleClientMark, onRemoveClientMark }: PhotoPreviewModalProps) => {
   const [index, setIndex] = useState(initialIndex);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
@@ -52,12 +40,9 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
   const [markingPrinted, setMarkingPrinted] = useState(false);
   const [dragOffsetX, setDragOffsetX] = useState(0);
   const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
-  const [settleDirection, setSettleDirection] = useState<"prev" | "next" | null>(null);
-  const [isResettingCarousel, setIsResettingCarousel] = useState(false);
   const previewOpenedAtRef = useRef<number | null>(null)
   const imageRequestStartedAtRef = useRef<number | null>(null)
   const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
-  const settleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -71,18 +56,8 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
     }
   }, [open])
 
-  const prev = useCallback(() => {
-    setIndex((i) => (i > 0 ? i - 1 : photos.length - 1))
-  }, [photos.length]);
-  const next = useCallback(() => {
-    setIndex((i) => (i < photos.length - 1 ? i + 1 : 0))
-  }, [photos.length]);
-
-  useEffect(() => {
-    return () => {
-      if (settleTimeoutRef.current) clearTimeout(settleTimeoutRef.current)
-    }
-  }, [])
+  const prev = useCallback(() => setIndex((i) => (i > 0 ? i - 1 : photos.length - 1)), [photos.length]);
+  const next = useCallback(() => setIndex((i) => (i < photos.length - 1 ? i + 1 : 0)), [photos.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -101,7 +76,17 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
     setPortalReady(true)
   }, [])
 
-  const photo = photos[index] as PreviewPhoto;
+  const photo = photos[index] as Photo & {
+    clientMarkDetails?: PhotoClientMarkDetail[];
+    displayUrl?: string;
+    clientPreviewUrl?: string;
+    originalUrl?: string;
+    retouchedOriginalUrl?: string;
+    displayFileId?: string;
+    clientPreviewFileId?: string;
+    versionCount?: number;
+    latestVersionNo?: number;
+  };
 
   const watermarkConfig = getClientWatermarkConfig(project)
   const watermarkVersionSignature = getWatermarkVersionSignature(project)
@@ -117,7 +102,6 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
     setPreviewSrcOverride(null)
     setDragOffsetX(0)
     setIsDraggingPhoto(false)
-    setSettleDirection(null)
   }, [index, open, photos.length])
 
   const canPreviewPrint = Boolean(projectId && !clientDownloadMode && printPreviewPhotoIds.includes(photo.id))
@@ -153,38 +137,6 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
     : ''
 
   const activeSrc = !printPreviewEnabled && highResRequested ? highResSrc : previewSrc
-  const previousPhotoIndex = index > 0 ? index - 1 : photos.length - 1
-  const nextPhotoIndex = index < photos.length - 1 ? index + 1 : 0
-  const previousPhoto = photos[previousPhotoIndex] as PreviewPhoto | undefined
-  const nextPhoto = photos[nextPhotoIndex] as PreviewPhoto | undefined
-  const getLowResPreviewSrc = (candidate: PreviewPhoto | undefined, candidateIndex: number) => {
-    if (!candidate) return ''
-    if (clientDownloadMode) {
-      const canUseDirectPreview = Boolean(
-        candidate.clientPreviewUrl
-        && (!watermarkConfig.enabled || candidate.clientPreviewWatermarkSignature === watermarkVersionSignature)
-      )
-      return canUseDirectPreview
-        ? candidate.clientPreviewUrl!
-        : `/api/photos/${candidate.id}/client-render?mode=preview&disposition=inline&ts=${candidate.id}-${candidateIndex}-adjacent&wv=${encodeURIComponent(watermarkVersionSignature)}${debugPreview ? '&debug=1' : ''}`
-    }
-    return candidate.thumbUrl || candidate.url || candidate.displayUrl || candidate.file_url || ''
-  }
-  const currentPreviewPlaceholderSrc = getLowResPreviewSrc(photo, index)
-  const previousPreviewSrc = photos.length > 1 ? getLowResPreviewSrc(previousPhoto, previousPhotoIndex) : ''
-  const nextPreviewSrc = photos.length > 1 ? getLowResPreviewSrc(nextPhoto, nextPhotoIndex) : ''
-  const showCurrentPreviewPlaceholder = Boolean(
-    imageLoading
-    && !printPreviewEnabled
-    && currentPreviewPlaceholderSrc
-  )
-  const carouselTranslate = settleDirection === 'prev'
-    ? 'translate3d(0, 0, 0)'
-    : settleDirection === 'next'
-      ? 'translate3d(-200%, 0, 0)'
-      : `translate3d(calc(-100% + ${dragOffsetX}px), 0, 0)`
-  const carouselCanTransition = !isDraggingPhoto && !isResettingCarousel
-  const showSwipeCarousel = isDraggingPhoto || settleDirection !== null
   const previewPath = useMemo(() => {
     if (printPreviewEnabled) return 'print-preview'
     if (!clientDownloadMode) return 'non-client-preview'
@@ -219,22 +171,6 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
       })
     }
   }, [open, activeSrc, debugPreview, previewPath, photo?.id])
-
-  useEffect(() => {
-    if (!open) return
-    const sources = [currentPreviewPlaceholderSrc, previousPreviewSrc, nextPreviewSrc].filter(Boolean)
-    const preloads = sources.map((src) => {
-      const image = new Image()
-      image.src = src
-      return image
-    })
-    return () => {
-      preloads.forEach((image) => {
-        image.onload = null
-        image.onerror = null
-      })
-    }
-  }, [open, currentPreviewPlaceholderSrc, previousPreviewSrc, nextPreviewSrc])
 
   if (!open || photos.length === 0 || !portalReady || !photo) return null;
 
@@ -288,7 +224,6 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
   };
 
   const handleSwipeStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (settleDirection || photos.length <= 1) return
     if (event.touches.length !== 1) {
       swipeStartRef.current = null
       setDragOffsetX(0)
@@ -302,7 +237,6 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
   }
 
   const handleSwipeMove = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (settleDirection || photos.length <= 1) return
     const start = swipeStartRef.current
     if (!start || event.touches.length !== 1) return
 
@@ -318,25 +252,6 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
 
     event.preventDefault()
     setDragOffsetX(deltaX * 0.9)
-  }
-
-  const completeSwipe = (direction: "prev" | "next") => {
-    if (settleTimeoutRef.current) clearTimeout(settleTimeoutRef.current)
-    setSettleDirection(direction)
-    setDragOffsetX(0)
-    const targetIndex = direction === 'next'
-      ? (index < photos.length - 1 ? index + 1 : 0)
-      : (index > 0 ? index - 1 : photos.length - 1)
-
-    settleTimeoutRef.current = setTimeout(() => {
-      setIsResettingCarousel(true)
-      setIndex(targetIndex)
-      setSettleDirection(null)
-      setDragOffsetX(0)
-      requestAnimationFrame(() => {
-        setIsResettingCarousel(false)
-      })
-    }, 190)
   }
 
   const handleSwipeEnd = (event: React.TouchEvent<HTMLDivElement>) => {
@@ -359,9 +274,9 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
     if (horizontalDistance < 48 || horizontalDistance < Math.abs(deltaY) * 1.25 || elapsed > 800) return
 
     if (deltaX < 0) {
-      completeSwipe('next')
+      next()
     } else {
-      completeSwipe('prev')
+      prev()
     }
   }
 
@@ -564,196 +479,72 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
           setIsDraggingPhoto(false)
         }}
       >
-        {showSwipeCarousel ? (
-          <div
-            className={`relative flex max-h-[calc(100dvh-7rem)] overflow-hidden bg-transparent ${carouselCanTransition ? 'transition-transform duration-200 ease-out' : ''}`}
-            style={{
-              transform: carouselTranslate,
-            }}
-          >
-            <div className="flex w-full shrink-0 items-center justify-center">
-              {previousPreviewSrc && previousPhoto && (
-                <img
-                  src={previousPreviewSrc}
-                  alt={previousPhoto.fileName}
-                  className="max-h-[calc(100dvh-7rem)] max-w-full scale-[1.02] object-contain opacity-70 blur-sm"
-                  draggable={false}
-                />
-              )}
-            </div>
-            <div className="relative flex min-h-[60dvh] w-full shrink-0 items-center justify-center overflow-hidden bg-black/45">
-              {showCurrentPreviewPlaceholder && (
-                <img
-                  src={currentPreviewPlaceholderSrc}
-                  alt=""
-                  className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-2xl"
-                  draggable={false}
-                  aria-hidden="true"
-                />
-              )}
-              {imageLoading && (
-                <div className={`absolute inset-0 z-20 flex items-center justify-center ${showCurrentPreviewPlaceholder ? 'bg-transparent' : 'bg-black/35 backdrop-blur-sm'}`}>
-                  <div className="flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-sm text-white">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    {highResRequested && !highResLoaded ? 'Loading high resolution…' : 'Loading image…'}
-                  </div>
-                </div>
-              )}
-              {showCurrentPreviewPlaceholder && (
-                <img
-                  src={currentPreviewPlaceholderSrc}
-                  alt={photo.fileName}
-                  className="pointer-events-none relative z-[1] max-h-[calc(100dvh-7rem)] max-w-full scale-[1.01] object-contain opacity-95 blur-sm"
-                  draggable={false}
-                  aria-hidden="true"
-                />
-              )}
-              <img
-                src={activeSrc}
-                alt={photo.fileName}
-                className={`${showCurrentPreviewPlaceholder ? 'absolute left-1/2 top-1/2 z-10 max-h-[calc(100dvh-7rem)] max-w-full -translate-x-1/2 -translate-y-1/2' : 'max-h-[calc(100dvh-7rem)] max-w-full'} object-contain`}
-                draggable={false}
-                onLoad={(event) => {
-                  setImageLoading(false)
-                  if (highResRequested) setHighResLoaded(true)
-                  if (debugPreview) {
-                    const requestMs = imageRequestStartedAtRef.current == null ? null : Math.round(performance.now() - imageRequestStartedAtRef.current)
-                    const totalSinceOpenMs = previewOpenedAtRef.current == null ? null : Math.round(performance.now() - previewOpenedAtRef.current)
-                    const headers = event.currentTarget.currentSrc.includes('/api/photos/')
-                      ? 'inspect network response headers for X-Debug-*'
-                      : 'direct image request'
-                    console.debug('[preview-modal] image-loaded', {
-                      photoId: photo.id,
-                      previewPath,
-                      src: event.currentTarget.currentSrc,
-                      requestMs,
-                      totalSinceOpenMs,
-                      headers,
-                    })
-                  }
-                }}
-                onError={(event) => {
-                  if (debugPreview) {
-                    const requestMs = imageRequestStartedAtRef.current == null ? null : Math.round(performance.now() - imageRequestStartedAtRef.current)
-                    const totalSinceOpenMs = previewOpenedAtRef.current == null ? null : Math.round(performance.now() - previewOpenedAtRef.current)
-                    console.debug('[preview-modal] image-error', {
-                      photoId: photo.id,
-                      previewPath,
-                      src: event.currentTarget.currentSrc || activeSrc,
-                      requestMs,
-                      totalSinceOpenMs,
-                    })
-                  }
-                  if (!highResRequested && clientDownloadMode && canUseDirectClientPreview && photo.clientPreviewUrl && previewSrc === photo.clientPreviewUrl) {
-                    setPreviewSrcOverride(previewFallbackSrc)
-                    setImageLoading(true)
-                    return
-                  }
-                  setImageLoading(false)
-                  if (highResRequested) {
-                    setHighResFailed(true)
-                    setHighResRequested(false)
-                  }
-                }}
-              />
-              {clientDownloadMode && watermarkConfig.enabled && watermarkConfig.logoUrl && false && null}
-              {photo.isPublished === false && (
-                <div className="absolute inset-0 bg-black/20 pointer-events-none" />
-              )}
-            </div>
-            <div className="flex w-full shrink-0 items-center justify-center">
-              {nextPreviewSrc && nextPhoto && (
-                <img
-                  src={nextPreviewSrc}
-                  alt={nextPhoto.fileName}
-                  className="max-h-[calc(100dvh-7rem)] max-w-full scale-[1.02] object-contain opacity-70 blur-sm"
-                  draggable={false}
-                />
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="relative flex min-h-[60dvh] w-full max-h-[calc(100dvh-7rem)] items-center justify-center overflow-hidden bg-black/45">
-            {showCurrentPreviewPlaceholder && (
-              <img
-                src={currentPreviewPlaceholderSrc}
-                alt=""
-                className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-2xl"
-                draggable={false}
-                aria-hidden="true"
-              />
-            )}
-            {imageLoading && (
-              <div className={`absolute inset-0 z-20 flex items-center justify-center ${showCurrentPreviewPlaceholder ? 'bg-transparent' : 'bg-black/35 backdrop-blur-sm'}`}>
-                <div className="flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-sm text-white">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {highResRequested && !highResLoaded ? 'Loading high resolution…' : 'Loading image…'}
-                </div>
+        <div
+          className={`relative flex max-h-[calc(100dvh-7rem)] items-center justify-center overflow-hidden bg-transparent ${isDraggingPhoto ? '' : 'transition-transform duration-200 ease-out'}`}
+          style={{
+            transform: `translate3d(${dragOffsetX}px, 0, 0)`,
+          }}
+        >
+          {imageLoading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35 backdrop-blur-sm">
+              <div className="flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-sm text-white">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {highResRequested && !highResLoaded ? 'Loading high resolution…' : 'Loading image…'}
               </div>
-            )}
-            {showCurrentPreviewPlaceholder && (
-              <img
-                src={currentPreviewPlaceholderSrc}
-                alt={photo.fileName}
-                className="pointer-events-none relative z-[1] max-h-[calc(100dvh-7rem)] max-w-full scale-[1.01] object-contain opacity-95 blur-sm"
-                draggable={false}
-                aria-hidden="true"
-              />
-            )}
-              <img
-                src={activeSrc}
-                alt={photo.fileName}
-                className={`${showCurrentPreviewPlaceholder ? 'absolute left-1/2 top-1/2 z-10 max-h-[calc(100dvh-7rem)] max-w-full -translate-x-1/2 -translate-y-1/2' : 'max-h-[calc(100dvh-7rem)] max-w-full'} object-contain`}
-                draggable={false}
-                onLoad={(event) => {
-                  setImageLoading(false)
-                  if (highResRequested) setHighResLoaded(true)
-                  if (debugPreview) {
-                    const requestMs = imageRequestStartedAtRef.current == null ? null : Math.round(performance.now() - imageRequestStartedAtRef.current)
-                    const totalSinceOpenMs = previewOpenedAtRef.current == null ? null : Math.round(performance.now() - previewOpenedAtRef.current)
-                    const headers = event.currentTarget.currentSrc.includes('/api/photos/')
-                      ? 'inspect network response headers for X-Debug-*'
-                      : 'direct image request'
-                    console.debug('[preview-modal] image-loaded', {
-                      photoId: photo.id,
-                      previewPath,
-                      src: event.currentTarget.currentSrc,
-                      requestMs,
-                      totalSinceOpenMs,
-                      headers,
-                    })
-                  }
-                }}
-                onError={(event) => {
-                  if (debugPreview) {
-                    const requestMs = imageRequestStartedAtRef.current == null ? null : Math.round(performance.now() - imageRequestStartedAtRef.current)
-                    const totalSinceOpenMs = previewOpenedAtRef.current == null ? null : Math.round(performance.now() - previewOpenedAtRef.current)
-                    console.debug('[preview-modal] image-error', {
-                      photoId: photo.id,
-                      previewPath,
-                      src: event.currentTarget.currentSrc || activeSrc,
-                      requestMs,
-                      totalSinceOpenMs,
-                    })
-                  }
-                  if (!highResRequested && clientDownloadMode && canUseDirectClientPreview && photo.clientPreviewUrl && previewSrc === photo.clientPreviewUrl) {
-                    setPreviewSrcOverride(previewFallbackSrc)
-                    setImageLoading(true)
-                    return
-                  }
-                  setImageLoading(false)
-                  if (highResRequested) {
-                    setHighResFailed(true)
-                    setHighResRequested(false)
-                  }
-                }}
-              />
-            {clientDownloadMode && watermarkConfig.enabled && watermarkConfig.logoUrl && false && null}
-            {photo.isPublished === false && (
-              <div className="absolute inset-0 bg-black/20 pointer-events-none" />
-            )}
-          </div>
-        )}
+            </div>
+          )}
+          <img
+            src={activeSrc}
+            alt={photo.fileName}
+            className="max-h-[calc(100dvh-7rem)] max-w-full object-contain"
+            onLoad={(event) => {
+              setImageLoading(false)
+              if (highResRequested) setHighResLoaded(true)
+              if (debugPreview) {
+                const requestMs = imageRequestStartedAtRef.current == null ? null : Math.round(performance.now() - imageRequestStartedAtRef.current)
+                const totalSinceOpenMs = previewOpenedAtRef.current == null ? null : Math.round(performance.now() - previewOpenedAtRef.current)
+                const headers = event.currentTarget.currentSrc.includes('/api/photos/')
+                  ? 'inspect network response headers for X-Debug-*'
+                  : 'direct image request'
+                console.debug('[preview-modal] image-loaded', {
+                  photoId: photo.id,
+                  previewPath,
+                  src: event.currentTarget.currentSrc,
+                  requestMs,
+                  totalSinceOpenMs,
+                  headers,
+                })
+              }
+            }}
+            onError={(event) => {
+              if (debugPreview) {
+                const requestMs = imageRequestStartedAtRef.current == null ? null : Math.round(performance.now() - imageRequestStartedAtRef.current)
+                const totalSinceOpenMs = previewOpenedAtRef.current == null ? null : Math.round(performance.now() - previewOpenedAtRef.current)
+                console.debug('[preview-modal] image-error', {
+                  photoId: photo.id,
+                  previewPath,
+                  src: event.currentTarget.currentSrc || activeSrc,
+                  requestMs,
+                  totalSinceOpenMs,
+                })
+              }
+              if (!highResRequested && clientDownloadMode && canUseDirectClientPreview && photo.clientPreviewUrl && previewSrc === photo.clientPreviewUrl) {
+                setPreviewSrcOverride(previewFallbackSrc)
+                setImageLoading(true)
+                return
+              }
+              setImageLoading(false)
+              if (highResRequested) {
+                setHighResFailed(true)
+                setHighResRequested(false)
+              }
+            }}
+          />
+          {clientDownloadMode && watermarkConfig.enabled && watermarkConfig.logoUrl && false && null}
+          {photo.isPublished === false && (
+            <div className="absolute inset-0 bg-black/20 pointer-events-none" />
+          )}
+        </div>
       </div>
 
       <button
