@@ -40,6 +40,7 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
   const [markingPrinted, setMarkingPrinted] = useState(false);
   const previewOpenedAtRef = useRef<number | null>(null)
   const imageRequestStartedAtRef = useRef<number | null>(null)
+  const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -217,6 +218,35 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
       setShowDeleteConfirm(false);
     }
   };
+
+  const handleSwipeStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 1) {
+      swipeStartRef.current = null
+      return
+    }
+    const touch = event.touches[0]
+    swipeStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() }
+  }
+
+  const handleSwipeEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = swipeStartRef.current
+    swipeStartRef.current = null
+    if (!start || event.changedTouches.length === 0) return
+
+    const touch = event.changedTouches[0]
+    const deltaX = touch.clientX - start.x
+    const deltaY = touch.clientY - start.y
+    const elapsed = Date.now() - start.time
+    const horizontalDistance = Math.abs(deltaX)
+
+    if (horizontalDistance < 48 || horizontalDistance < Math.abs(deltaY) * 1.25 || elapsed > 800) return
+
+    if (deltaX < 0) {
+      next()
+    } else {
+      prev()
+    }
+  }
 
   return createPortal(
     <div
@@ -405,7 +435,15 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
         <ChevronLeft className="h-6 w-6" />
       </button>
 
-      <div className="max-h-[calc(100dvh-7rem)] w-[min(92vw,1200px)] transform-gpu" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="max-h-[calc(100dvh-7rem)] w-[min(92vw,1200px)] touch-pan-y transform-gpu"
+        onClick={(e) => e.stopPropagation()}
+        onTouchStart={handleSwipeStart}
+        onTouchEnd={handleSwipeEnd}
+        onTouchCancel={() => {
+          swipeStartRef.current = null
+        }}
+      >
         <div className="relative flex max-h-[calc(100dvh-7rem)] items-center justify-center overflow-hidden bg-transparent">
           {imageLoading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35 backdrop-blur-sm">
