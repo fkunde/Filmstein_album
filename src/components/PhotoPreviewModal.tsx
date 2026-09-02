@@ -38,6 +38,8 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
   const [printPreviewEnabled, setPrintPreviewEnabled] = useState(false);
   const [previewSrcOverride, setPreviewSrcOverride] = useState<string | null>(null);
   const [markingPrinted, setMarkingPrinted] = useState(false);
+  const [dragOffsetX, setDragOffsetX] = useState(0);
+  const [isDraggingPhoto, setIsDraggingPhoto] = useState(false);
   const previewOpenedAtRef = useRef<number | null>(null)
   const imageRequestStartedAtRef = useRef<number | null>(null)
   const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
@@ -98,6 +100,8 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
     setHighResFailed(false)
     setPrintPreviewEnabled(false)
     setPreviewSrcOverride(null)
+    setDragOffsetX(0)
+    setIsDraggingPhoto(false)
   }, [index, open, photos.length])
 
   const canPreviewPrint = Boolean(projectId && !clientDownloadMode && printPreviewPhotoIds.includes(photo.id))
@@ -222,22 +226,50 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
   const handleSwipeStart = (event: React.TouchEvent<HTMLDivElement>) => {
     if (event.touches.length !== 1) {
       swipeStartRef.current = null
+      setDragOffsetX(0)
+      setIsDraggingPhoto(false)
       return
     }
     const touch = event.touches[0]
     swipeStartRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() }
+    setDragOffsetX(0)
+    setIsDraggingPhoto(true)
+  }
+
+  const handleSwipeMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = swipeStartRef.current
+    if (!start || event.touches.length !== 1) return
+
+    const touch = event.touches[0]
+    const deltaX = touch.clientX - start.x
+    const deltaY = touch.clientY - start.y
+    const horizontalDistance = Math.abs(deltaX)
+
+    if (horizontalDistance < 8 || horizontalDistance < Math.abs(deltaY)) {
+      setDragOffsetX(0)
+      return
+    }
+
+    event.preventDefault()
+    setDragOffsetX(deltaX * 0.9)
   }
 
   const handleSwipeEnd = (event: React.TouchEvent<HTMLDivElement>) => {
     const start = swipeStartRef.current
     swipeStartRef.current = null
-    if (!start || event.changedTouches.length === 0) return
+    setIsDraggingPhoto(false)
+    if (!start || event.changedTouches.length === 0) {
+      setDragOffsetX(0)
+      return
+    }
 
     const touch = event.changedTouches[0]
     const deltaX = touch.clientX - start.x
     const deltaY = touch.clientY - start.y
     const elapsed = Date.now() - start.time
     const horizontalDistance = Math.abs(deltaX)
+
+    setDragOffsetX(0)
 
     if (horizontalDistance < 48 || horizontalDistance < Math.abs(deltaY) * 1.25 || elapsed > 800) return
 
@@ -439,12 +471,20 @@ const PhotoPreviewModal = ({ photos, projectId, printPreviewPhotoIds = [], initi
         className="max-h-[calc(100dvh-7rem)] w-[min(92vw,1200px)] touch-pan-y transform-gpu"
         onClick={(e) => e.stopPropagation()}
         onTouchStart={handleSwipeStart}
+        onTouchMove={handleSwipeMove}
         onTouchEnd={handleSwipeEnd}
         onTouchCancel={() => {
           swipeStartRef.current = null
+          setDragOffsetX(0)
+          setIsDraggingPhoto(false)
         }}
       >
-        <div className="relative flex max-h-[calc(100dvh-7rem)] items-center justify-center overflow-hidden bg-transparent">
+        <div
+          className={`relative flex max-h-[calc(100dvh-7rem)] items-center justify-center overflow-hidden bg-transparent ${isDraggingPhoto ? '' : 'transition-transform duration-200 ease-out'}`}
+          style={{
+            transform: `translate3d(${dragOffsetX}px, 0, 0)`,
+          }}
+        >
           {imageLoading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/35 backdrop-blur-sm">
               <div className="flex items-center gap-3 rounded-full bg-white/10 px-4 py-2 text-sm text-white">
